@@ -1,0 +1,7 @@
+{
+  "id": "owner-prefers-code",
+  "createdAt": "2026-06-14T00:00:00.000Z",
+  "name": "Owner prefers code over markdown",
+  "type": "feedback",
+  "body": "All features should prefer code for repeatable functionality rather than markdown. Capabilities must be modular and swappable, and every built component needs a UI wrapper or config widget."
+}
