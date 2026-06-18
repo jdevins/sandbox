@@ -1,0 +1,26 @@
+[
+  {
+    "id": "backlog-review",
+    "name": "Backlog Review",
+    "cron": "0 8 * * *",
+    "prompt": "prompts/backlog-review.md",
+    "enabled": true,
+    "description": "Weekly summary of backlog state — pending items, blockers, and next priorities."
+  },
+  {
+    "id": "backlog-groom",
+    "name": "Backlog Groomer",
+    "cron": "0 */2 * * *",
+    "prompt": "prompts/backlog-groom.md",
+    "enabled": true,
+    "description": "Annotator agent — estimates, flags one-way doors, and challenges usefulness of pending items. Read-only on the repo; append-only on the backlog."
+  },
+  {
+    "id": "backlog-build",
+    "name": "Backlog Builder",
+    "cron": "0 9 * * *",
+    "prompt": "prompts/backlog-build.md",
+    "enabled": false,
+    "description": "Worker agent — claims ONE human-approved item, builds it on a branch, opens a PR (never merges). Disabled by default; gate kept manual."
+  }
+]

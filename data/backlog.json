@@ -1,0 +1,32 @@
+[
+  {
+    "id": "mqjivy2d",
+    "title": "A full loop",
+    "description": "Propose an addition to Sandbox that we can build using a full agent loop.  What agents we'll need, tools, and iterations?",
+    "type": "feature",
+    "status": "pending",
+    "addedBy": "",
+    "estimate": null,
+    "createdAt": "2026-06-18T13:15:31.765Z"
+  },
+  {
+    "id": "mqjiuds2",
+    "title": "Agent - 12thMan",
+    "description": "Create an agent that assumes what the other agents are doing is heading down the wrong path.  ",
+    "type": "feature",
+    "status": "pending",
+    "addedBy": "",
+    "estimate": null,
+    "createdAt": "2026-06-18T13:14:18.818Z"
+  },
+  {
+    "id": "mqjirtc7",
+    "title": "Brainstorm",
+    "description": "Propose 3 scenarios that would improve the agent simulator feature.  We want more scenarios that showcase tool calls, automated decisions on when to dynamically add other agents, better structure to add scenarios, etc.",
+    "type": "feature",
+    "status": "pending",
+    "addedBy": "",
+    "estimate": null,
+    "createdAt": "2026-06-18T13:12:19.015Z"
+  }
+]

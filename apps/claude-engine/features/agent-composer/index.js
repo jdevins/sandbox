@@ -2,6 +2,7 @@ import express from 'express';
 import { html } from '../../lib/html.js';
 import { slug } from '../../lib/store.js';
 import { agentModuleSource } from './codegen.js';
+import { learnIndex, lessonPage } from './learn.js';
 
 export const meta = {
   name: 'Agent Composer',
@@ -50,7 +51,7 @@ export function createFeature(ctx) {
       ${ui.pageHead({
         title: '🤖 Agent Composer',
         subtitle: 'Compose agents from skills + a system prompt.',
-        actions: ui.btn({ href: `${base}/new`, label: '+ New agent', primary: true }),
+        actions: html`${ui.btn({ href: `${base}/learn`, label: '🎓 Problem → Agent Fit' })}${ui.btn({ href: `${base}/new`, label: '+ New agent', primary: true })}`,
       })}
       ${agents.length ? ui.grid(cards) : ui.empty('No agents yet — compose one.')}`;
     res.send(shell('Agents', body));
@@ -85,6 +86,11 @@ export function createFeature(ctx) {
     });
     res.send(shell('New agent', html`${ui.pageHead({ title: 'New agent' })}${form}`, [...crumb, { href: '#', label: 'New' }]));
   });
+
+  // Agent Training — curriculum index + individual lessons. Declared before the
+  // /:id route so "learn" isn't swallowed as an agent id.
+  router.get('/learn', async (req, res) => res.send(await learnIndex(ctx)));
+  router.get('/learn/:id', async (req, res) => res.send(await lessonPage(ctx, req.params.id)));
 
   // Create
   router.post('/', async (req, res) => {
