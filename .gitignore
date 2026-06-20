@@ -3,3 +3,8 @@ npm-debug.log*
 .env
 .DS_Store
 *.local
+
+# markitdown app: Python virtualenv (rebuilt by `npm run markitdown:setup`)
+apps/markitdown/service/.venv/
+apps/markitdown/data/runs/
+__pycache__/

@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "markitdown:setup": "node apps/markitdown/lib/setup.js"
   },
   "dependencies": {
     "ejs": "^3.1.10",

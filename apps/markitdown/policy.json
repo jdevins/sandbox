@@ -1,0 +1,19 @@
+{
+  "_comment": "Single source of truth for what MarkItDown accepts. Read by the Python service (enforced on /convert, exposed at /policy) and by the Node app/UI. Already-text formats (.txt/.md/.json/.xml), image formats, and audio/video files are intentionally excluded — text is already AI-ready; images/audio/video yield no usable text without OCR/LLM captioning.",
+  "extensions": [
+    ".csv", ".docx", ".epub", ".htm", ".html",
+    ".msg", ".pdf", ".pptx", ".xls", ".xlsx", ".zip"
+  ],
+  "maxFileMB": 50,
+  "oneOffBatch": { "maxFiles": 100, "maxTotalMB": 250 },
+  "tokenSavings": {
+    "_comment": "saved ≈ (fileBytes × density / charsPerToken) − (markdownChars / charsPerToken). density = fraction of the original file that is raw extractable text you'd otherwise feed an AI.",
+    "charsPerToken": 4,
+    "defaultDensity": 0.2,
+    "density": {
+      ".html": 0.9, ".htm": 0.9, ".csv": 1.0, ".docx": 0.15, ".pptx": 0.1,
+      ".xls": 0.12, ".xlsx": 0.12, ".pdf": 0.08, ".epub": 0.25, ".msg": 0.5,
+      ".zip": 0.1
+    }
+  }
+}
