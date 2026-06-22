@@ -6,5 +6,7 @@ npm-debug.log*
 
 # markitdown app: Python virtualenv (rebuilt by `npm run markitdown:setup`)
 apps/markitdown/service/.venv/
+apps/markitdown/service/build/
+apps/markitdown/dist/
 apps/markitdown/data/runs/
 __pycache__/
