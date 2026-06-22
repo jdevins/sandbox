@@ -124,7 +124,10 @@ function runPrompt(job) {
   writeRun(job.id, { status: 'running', output: null, startedAt: new Date().toISOString() });
 
   // claude -p reads the prompt from stdin; piping it in avoids arg-quoting issues.
-  const child = spawn('claude', ['-p'], { cwd: ROOT, shell: true });
+  // Scheduled runs are headless — no one can approve a permission prompt — so we
+  // pre-allow the curl calls our local prompts use (e.g. the groomer's backlog API).
+  // Scope it tightly: only curl, nothing else stays gated-then-stalled.
+  const child = spawn('claude', ['-p', '--allowedTools', 'Bash(curl:*)'], { cwd: ROOT, shell: true });
   let output = '';
   let error = '';
 
@@ -140,15 +143,28 @@ function runPrompt(job) {
   child.stderr.on('data', (d) => (error += d.toString()));
 
   child.on('close', (code) => {
+    const out = output || error || '(no output)';
+    const blocked = code === 0 && looksPermissionBlocked(out);
     writeRun(job.id, {
-      status: code === 0 ? 'ok' : 'error',
-      output: output || error || '(no output)',
+      status: code === 0 && !blocked ? 'ok' : 'error',
+      output: blocked
+        ? `⚠ Run blocked on a tool permission prompt — the agent could not get approval headlessly. ` +
+          `Add the needed tool to --allowedTools in src/scheduler.js.\n\n${out}`
+        : out,
       finishedAt: new Date().toISOString(),
     });
   });
 
   child.stdin.write(promptText);
   child.stdin.end();
+}
+
+// A headless `claude -p` exits 0 even when it gave up because a tool needed
+// approval — so a permission block masquerades as a successful run. Sniff the
+// output for that signature and treat it as an error instead of silent "ok".
+const PERMISSION_BLOCK = /(needs?|requires?).{0,30}(approval|permission)|permission prompt|approve the tool|I'?m blocked/i;
+function looksPermissionBlocked(output) {
+  return typeof output === 'string' && PERMISSION_BLOCK.test(output);
 }
 
 function writeRun(id, fields) {

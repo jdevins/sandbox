@@ -1,32 +1,104 @@
 [
   {
+    "estimate": "L",
+    "approvedForBuild": false,
+    "claim": null,
     "id": "mqjivy2d",
     "title": "A full loop",
     "description": "Propose an addition to Sandbox that we can build using a full agent loop.  What agents we'll need, tools, and iterations?",
     "type": "feature",
-    "status": "pending",
+    "status": "groomed",
     "addedBy": "",
-    "estimate": null,
-    "createdAt": "2026-06-18T13:15:31.765Z"
+    "createdAt": "2026-06-18T13:15:31.765Z",
+    "annotations": [
+      {
+        "agent": "groomer",
+        "kind": "vagueness",
+        "body": "No definition of what the loop accomplishes or which app/feature it lives in. Unblock with: target app, the task the loop should solve, and what counts as done per iteration.",
+        "createdAt": "2026-06-18T22:00:23.574Z"
+      },
+      {
+        "agent": "groomer",
+        "kind": "estimate",
+        "body": "L � agent loop with tool calling and iteration control is a multi-day build, not a quick prototype.",
+        "createdAt": "2026-06-18T22:00:23.619Z"
+      },
+      {
+        "agent": "groomer",
+        "kind": "usefulness",
+        "body": "Benefits whoever wants a reusable agent-loop pattern in Sandbox, but as written its just a proposal-for-a-proposal. Nothing breaks if skipped. Recommend kill unless rewritten with a concrete target use case.",
+        "createdAt": "2026-06-18T22:00:23.664Z"
+      },
+      {
+        "agent": "groomer",
+        "kind": "one-way-door",
+        "body": "No critical one-way doors � its a design proposal, nothing is built or migrated yet.",
+        "createdAt": "2026-06-18T22:00:23.708Z"
+      }
+    ]
   },
   {
+    "estimate": "M",
+    "approvedForBuild": false,
+    "claim": null,
     "id": "mqjiuds2",
     "title": "Agent - 12thMan",
     "description": "Create an agent that assumes what the other agents are doing is heading down the wrong path.  ",
     "type": "feature",
-    "status": "pending",
+    "status": "groomed",
     "addedBy": "",
-    "estimate": null,
-    "createdAt": "2026-06-18T13:14:18.818Z"
+    "createdAt": "2026-06-18T13:14:18.818Z",
+    "annotations": [
+      {
+        "agent": "groomer",
+        "kind": "vagueness",
+        "body": "No spec for how this 12thMan agent gets invoked, what counts as another agents wrong path, or what action it takes when triggered. Unblock with: trigger point, output format, who acts on its objections.",
+        "createdAt": "2026-06-18T22:00:31.740Z"
+      },
+      {
+        "agent": "groomer",
+        "kind": "estimate",
+        "body": "M - a single critic agent module with a system prompt is straightforward, but wiring it into an existing multi-agent loop adds integration cost.",
+        "createdAt": "2026-06-18T22:00:31.781Z"
+      },
+      {
+        "agent": "groomer",
+        "kind": "usefulness",
+        "body": "Useful as a check against groupthink in multi-agent setups, but only if there is an existing agent pipeline for it to critique - none exists yet. Recommend keep but sequence after a real multi-agent feature is built.",
+        "createdAt": "2026-06-18T22:00:31.834Z"
+      },
+      {
+        "agent": "groomer",
+        "kind": "one-way-door",
+        "body": "No critical one-way doors - new agent module, additive only.",
+        "createdAt": "2026-06-18T22:00:31.879Z"
+      }
+    ]
   },
   {
+    "estimate": "L",
+    "approvedForBuild": false,
+    "claim": null,
     "id": "mqjirtc7",
-    "title": "Brainstorm",
-    "description": "Propose 3 scenarios that would improve the agent simulator feature.  We want more scenarios that showcase tool calls, automated decisions on when to dynamically add other agents, better structure to add scenarios, etc.",
+    "title": "Pixel Foundry — 3 new scenarios",
+    "description": "Add three new scenario files to apps/claude-engine/features/foundry/scenarios/. The loader already auto-discovers any *.scenario.js dropped there.\n\n1. TRIAGE (tool-call showcase): a backlog queue arrives. Agents have tools: read_item, annotate, flag_blocker. Goal is to process the queue, each agent picking the right tool per item type. Teaches agents choosing which tool to call per decision, not just moving on a grid.\n\n2. DYNAMIC CREW (spawn on condition): start solo builder. If budget < 50% before 60% completion, foreman spawns a second fetcher mid-run. Spawn event visible in the step log. Teaches reactive agent addition — not a fixed roster.\n\n3. CONTESTED RESOURCES (conflict → orchestration): two builders target the same cells from opposite ends. No foreman. They collide, waste budget, fail. Replay adds foreman with assignment coordination. Teaches why orchestration exists by showing its absence first.\n\nEach scenario follows the existing contract: definition, economy, build(rng), configs (solo + crew variants).",
     "type": "feature",
     "status": "pending",
-    "addedBy": "",
-    "estimate": null,
-    "createdAt": "2026-06-18T13:12:19.015Z"
+    "addedBy": "jdevins",
+    "createdAt": "2026-06-18T13:12:19.015Z",
+    "annotations": []
+  },
+  {
+    "estimate": "S",
+    "approvedForBuild": false,
+    "claim": null,
+    "id": "mqjsrch1",
+    "title": "Session Repack — full-text JSONL search",
+    "description": "Add a grep-style search bar to the Historical JSONL view (Option B) that searches across the raw content of every record, not just session titles. Returns a flat list of matching records with date/session as context on each row. Include/exclude filters remain as session-level coarse filters; this is finer-grained line-level search.",
+    "type": "feature",
+    "status": "pending",
+    "addedBy": "jdevins",
+    "createdAt": "2026-06-19T00:00:00.000Z",
+    "annotations": []
   }
 ]

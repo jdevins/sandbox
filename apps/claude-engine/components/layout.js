@@ -9,6 +9,7 @@ export function page({ title, active = '', breadcrumb = [], body }) {
     { href: `${BASE}/`, label: 'Overview', key: 'overview' },
     { href: `${BASE}/features/skill-builder`, label: 'Skills', key: 'skill-builder' },
     { href: `${BASE}/features/agent-composer`, label: 'Agents', key: 'agent-composer' },
+    { href: `${BASE}/features/command-center`, label: 'Command Center', key: 'command-center' },
     { href: `${BASE}/memories`, label: 'Memories', key: 'memories' },
   ];
   const crumbs = [{ href: '/', label: 'Server' }, { href: `${BASE}/`, label: 'Claude Engine' }, ...breadcrumb];

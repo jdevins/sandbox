@@ -1,0 +1,12 @@
+{
+  "id": "scheduler",
+  "createdAt": "2026-06-19T20:27:41.081Z",
+  "title": "Cron prompt scheduler (prompt files + run log + drift guard)",
+  "dependsOn": [
+    "claude-client"
+  ],
+  "status": "planned",
+  "notes": "Ports src/scheduler.js: cron-driven prompt files, per-job run log with history, and the out-of-band drift guard on schedules.json. Prompt still to author — will route through the claude-client seam instead of spawning claude directly.",
+  "prompt": "(planned — not yet authored. Ask Claude in this session to \"write Delivery #2\" and paste the result here, or edit this entry once the prompt is final.)",
+  "updatedAt": "2026-06-19T20:27:41.075Z"
+}

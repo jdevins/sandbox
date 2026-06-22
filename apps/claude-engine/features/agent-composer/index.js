@@ -90,6 +90,59 @@ export function createFeature(ctx) {
   // Agent Training — curriculum index + individual lessons. Declared before the
   // /:id route so "learn" isn't swallowed as an agent id.
   router.get('/learn', async (req, res) => res.send(await learnIndex(ctx)));
+
+  // Bounds demo — an ephemeral in-memory item mirroring the backlog's real
+  // guards, so a lesson can demonstrate structural bounds live without touching
+  // real backlog data. State resets on process restart (sandbox-ephemeral).
+  const freshDemo = () => ({
+    id: 'demo', title: 'Demo backlog item', status: 'pending',
+    approvedForBuild: false, claim: null, estimate: null, annotations: [],
+  });
+  let demo = freshDemo();
+  const ANNOTATE_ALLOWED = ['agent', 'kind', 'body', 'estimate'];
+
+  router.get('/learn/demo/state', (req, res) => res.json(demo));
+  router.post('/learn/demo/reset', (req, res) => { demo = freshDemo(); res.json({ ok: true, item: demo }); });
+
+  // ANNOTATOR bound: append-only. Forbidden fields have no code path to apply —
+  // they come back in `ignored`, which is the whole lesson.
+  router.post('/learn/demo/annotate', (req, res) => {
+    const b = req.body || {};
+    const ignored = Object.keys(b).filter((k) => !ANNOTATE_ALLOWED.includes(k));
+    const applied = ['annotation'];
+    demo.annotations.push({ agent: b.agent || 'groomer', kind: b.kind || 'note', body: String(b.body ?? ''), createdAt: new Date().toISOString() });
+    if (b.kind === 'estimate' && b.estimate) { demo.estimate = String(b.estimate).slice(0, 40); applied.push('estimate'); }
+    if (demo.status === 'pending') { demo.status = 'groomed'; applied.push('status→groomed'); }
+    res.json({ ok: true, applied, ignored, item: demo });
+  });
+
+  // Human gate.
+  router.post('/learn/demo/approve', (req, res) => {
+    const value = (req.body || {}).value;
+    if (value === '0') { demo.approvedForBuild = false; if (demo.status === 'ready') demo.status = 'groomed'; }
+    else if (demo.status === 'groomed' || demo.status === 'ready') { demo.approvedForBuild = true; demo.status = 'ready'; }
+    res.json({ ok: true, item: demo });
+  });
+
+  // WORKER bound: atomic claim, only on ready + approved; 409 otherwise.
+  router.post('/learn/demo/claim', (req, res) => {
+    const by = (req.body || {}).by || 'builder';
+    if (!(demo.status === 'ready' && demo.approvedForBuild)) return res.status(409).json({ ok: false, error: 'not ready + approved for build', item: demo });
+    if (demo.claim) return res.status(409).json({ ok: false, error: `already claimed by ${demo.claim.by}`, item: demo });
+    demo.claim = { by, at: new Date().toISOString() };
+    demo.status = 'in-progress';
+    res.json({ ok: true, item: demo });
+  });
+
+  // WORKER bound: only the claimer may finish; 403 otherwise.
+  router.post('/learn/demo/complete', (req, res) => {
+    const b = req.body || {};
+    if (!demo.claim || demo.claim.by !== b.by) return res.status(403).json({ ok: false, error: 'only the claimer may complete this item', item: demo });
+    demo.status = b.status === 'blocked' ? 'blocked' : 'done';
+    if (demo.status === 'done') demo.claim = null;
+    res.json({ ok: true, item: demo });
+  });
+
   router.get('/learn/:id', async (req, res) => res.send(await lessonPage(ctx, req.params.id)));
 
   // Create

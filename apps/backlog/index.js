@@ -6,25 +6,26 @@ import { ROOT } from '../../src/app.js';
 export const meta = {
   name: 'Backlog',
   description: 'Shared backlog. Items are stored in data/backlog.json.',
-  version: '2.0.0',
+  version: '2.1.0',
 };
 
 const FILE = path.join(ROOT, 'data', 'backlog.json');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// Working statuses form the grooming → approval → execution pipeline:
-//   pending  → groomed (agent annotated) → ready (human approved)
-//            → in-progress (builder claimed) → done | blocked
-const STATUSES = ['pending', 'groomed', 'ready', 'in-progress', 'done', 'blocked'];
+// Pipeline statuses:
+//   ready-to-groom  → groomed (agent annotated) → ready (human approved)
+//                   → in-progress (builder claimed) → done | blocked
+//   groomer-blocked → stays until human edits description, which resets to ready-to-groom
+const STATUSES = ['ready-to-groom', 'groomer-blocked', 'pending', 'groomed', 'ready', 'in-progress', 'done', 'blocked'];
 
-// New fields (annotations/claim/approvedForBuild) are defaulted on read so
-// older items keep working without a migration.
 function normalize(i) {
   return {
     estimate: null,
     approvedForBuild: false,
     claim: null,
     ...i,
+    // Legacy items with status 'pending' are treated as ready-to-groom
+    status: i.status === 'pending' ? 'ready-to-groom' : (i.status || 'ready-to-groom'),
     annotations: Array.isArray(i.annotations) ? i.annotations : [],
   };
 }
@@ -42,6 +43,8 @@ function write(items) {
 }
 
 const STATUS_COLORS = {
+  'ready-to-groom': '#2e7d4f',
+  'groomer-blocked': '#8b4513',
   pending: '#888',
   groomed: '#3a6ea5',
   ready: 'var(--accent, #7c6af7)',
@@ -61,13 +64,12 @@ function annotationsBlock(item) {
         <span class="badge" style="background:#555">${esc(a.agent)} · ${esc(a.kind)}</span>
         ${esc(a.body)}</div>`)
     .join('');
-  return `<details style="margin-top:6px">
+  return `<details style="margin-top:4px">
       <summary style="cursor:pointer;color:var(--muted);font-size:0.8em">${item.annotations.length} annotation(s)</summary>
       <div style="margin-top:4px">${rows}</div>
     </details>`;
 }
 
-// The human build gate: agents groom, but only a human flips approvedForBuild.
 function gateCell(item, name) {
   const claimLine = item.claim
     ? `<div style="font-size:0.75em;color:var(--muted);margin-top:3px">🔒 ${esc(item.claim.by)}</div>`
@@ -86,6 +88,23 @@ function gateCell(item, name) {
   return control + claimLine;
 }
 
+function editForm(item, name) {
+  const isReadyToGroom = item.status === 'ready-to-groom';
+  return `<details style="margin-top:6px">
+    <summary style="cursor:pointer;color:var(--muted);font-size:0.75em">edit</summary>
+    <form method="post" action="/apps/${name}/edit" style="margin-top:6px;display:flex;flex-direction:column;gap:6px">
+      <input type="hidden" name="id" value="${esc(item.id)}">
+      <input class="btn" name="title" value="${esc(item.title)}" placeholder="Title" style="font-size:0.85em">
+      <textarea class="btn" name="description" rows="3" placeholder="Description" style="font-size:0.85em;resize:vertical">${esc(item.description || '')}</textarea>
+      <label style="font-size:0.8em;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" name="readyToGroom" value="1"${isReadyToGroom ? ' checked' : ''}>
+        ready to groom
+      </label>
+      <button class="btn primary" type="submit" style="padding:2px 10px;font-size:0.8em;align-self:flex-start">Save</button>
+    </form>
+  </details>`;
+}
+
 export function createApp({ name }) {
   const router = express.Router();
 
@@ -102,7 +121,11 @@ export function createApp({ name }) {
     const rows = visible.map((item) => `
       <tr>
         <td style="color:var(--muted);font-size:0.8em">${esc(item.id)}</td>
-        <td><strong>${esc(item.title)}</strong>${item.description ? `<br><span style="color:var(--muted);font-size:0.85em">${esc(item.description)}</span>` : ''}${annotationsBlock(item)}</td>
+        <td>
+          <strong>${esc(item.title)}</strong>
+          ${item.description ? `<br><span style="color:var(--muted);font-size:0.85em">${esc(item.description)}</span>` : ''}
+          ${editForm(item, name)}
+        </td>
         <td>${esc(item.type || '—')}</td>
         <td>${statusBadge(item.status)}</td>
         <td style="font-size:0.8em;color:var(--muted)">${esc(item.estimate || '—')}</td>
@@ -118,7 +141,11 @@ export function createApp({ name }) {
             <button class="btn" style="padding:2px 8px;font-size:0.8em">Set</button>
           </form>
         </td>
-      </tr>`).join('');
+      </tr>
+      ${item.annotations.length ? `<tr>
+        <td></td>
+        <td colspan="8" style="padding-top:0;padding-bottom:10px">${annotationsBlock(item)}</td>
+      </tr>` : ''}`).join('');
 
     res.type('html').send(`<!doctype html><html data-theme="dark"><head>
       <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -148,7 +175,7 @@ export function createApp({ name }) {
         </form>
       </div>
 
-      <div class="row" style="margin-bottom:12px;gap:6px">${filterLinks}</div>
+      <div class="row" style="margin-bottom:12px;gap:6px;flex-wrap:wrap">${filterLinks}</div>
 
       <div class="card">
         ${visible.length === 0
@@ -159,8 +186,8 @@ export function createApp({ name }) {
       </div>
 
       <p class="muted" style="font-size:0.78em;margin-top:10px">
-        Pipeline: pending → groomed (agent) → <strong>ready</strong> (you approve) → in-progress (builder claims) → done.
-        Agents annotate &amp; groom via the API; only you flip the build gate.
+        Pipeline: <strong>ready-to-groom</strong> → groomed (agent) → <strong>ready</strong> (you approve) → in-progress (builder claims) → done.
+        <strong>groomer-blocked</strong>: agent couldn't correlate the item — edit description to reset to ready-to-groom.
       </p>
     </div></body></html>`);
   });
@@ -174,7 +201,7 @@ export function createApp({ name }) {
       title: String(title).slice(0, 120),
       description: description ? String(description).slice(0, 500) : '',
       type: type || 'feature',
-      status: 'pending',
+      status: 'ready-to-groom',
       addedBy: addedBy || '',
       estimate: null,
       createdAt: new Date().toISOString(),
@@ -183,7 +210,25 @@ export function createApp({ name }) {
     res.redirect(`/apps/${name}/`);
   });
 
-  // Human override — can set any status directly.
+  // Edit title/description. Saving description clears groomer-blocked → ready-to-groom.
+  router.post('/edit', (req, res) => {
+    const { id, title, description, readyToGroom } = req.body || {};
+    const items = read();
+    const item = items.find((i) => i.id === id);
+    if (item) {
+      if (title) item.title = String(title).slice(0, 120);
+      item.description = description ? String(description).slice(0, 500) : '';
+      // Toggle: if checkbox checked → ready-to-groom; unchecked → leave status alone unless blocked
+      if (readyToGroom === '1') {
+        item.status = 'ready-to-groom';
+      } else if (item.status === 'ready-to-groom') {
+        item.status = 'groomed'; // uncheck on a ready-to-groom item marks it as already groomed
+      }
+    }
+    write(items);
+    res.redirect(`/apps/${name}/`);
+  });
+
   router.post('/status', (req, res) => {
     const { id, status } = req.body || {};
     const items = read();
@@ -193,7 +238,6 @@ export function createApp({ name }) {
     res.redirect(`/apps/${name}/`);
   });
 
-  // Human build gate. Approving moves groomed/ready → ready + approvedForBuild.
   router.post('/approve', (req, res) => {
     const { id, value } = req.body || {};
     const items = read();
@@ -216,8 +260,7 @@ export function createApp({ name }) {
   // ── Agent API ──────────────────────────────────────────────────────────────
   router.get('/api/items', (req, res) => res.json(read()));
 
-  // ANNOTATOR role (Groomer): append-only feedback. May set the estimate and
-  // advance pending → groomed. Cannot touch claim, approval, or execution state.
+  // ANNOTATOR role (Groomer): append-only feedback. Advances ready-to-groom → groomed.
   router.post('/api/items/:id/annotate', (req, res) => {
     const { agent, kind, body, estimate } = req.body || {};
     const items = read();
@@ -230,14 +273,28 @@ export function createApp({ name }) {
       createdAt: new Date().toISOString(),
     });
     if (kind === 'estimate' && estimate) item.estimate = String(estimate).slice(0, 40);
-    if (item.status === 'pending') item.status = 'groomed';
+    if (item.status === 'ready-to-groom') item.status = 'groomed';
     write(items);
     res.json(item);
   });
 
-  // WORKER role (Builder): atomic claim. Single-threaded read→check→write makes
-  // this a safe check-and-set, so two builders can't grab the same item. Only
-  // ready + human-approved items are claimable.
+  // GROOMER role: set groomer-blocked when the item can't be correlated.
+  router.post('/api/items/:id/groom-block', (req, res) => {
+    const { agent, reason } = req.body || {};
+    const items = read();
+    const item = items.find((i) => i.id === req.params.id);
+    if (!item) return res.status(404).json({ error: 'Not found' });
+    item.status = 'groomer-blocked';
+    item.annotations.push({
+      agent: agent || 'groomer',
+      kind: 'blocked',
+      body: String(reason ?? 'Could not correlate to any known feature or codebase area.'),
+      createdAt: new Date().toISOString(),
+    });
+    write(items);
+    res.json(item);
+  });
+
   router.post('/api/items/:id/claim', (req, res) => {
     const { by } = req.body || {};
     const items = read();
@@ -253,7 +310,6 @@ export function createApp({ name }) {
     res.json(item);
   });
 
-  // WORKER role: only the claimer may finish the item it holds.
   router.post('/api/items/:id/complete', (req, res) => {
     const { by, status, result } = req.body || {};
     const items = read();
@@ -277,7 +333,8 @@ export function createApp({ name }) {
 
 export function health() {
   const items = read();
-  const pending = items.filter((i) => i.status === 'pending').length;
+  const readyToGroom = items.filter((i) => i.status === 'ready-to-groom').length;
+  const blocked = items.filter((i) => i.status === 'groomer-blocked').length;
   const ready = items.filter((i) => i.status === 'ready' && i.approvedForBuild).length;
-  return { ok: true, detail: `${items.length} items · ${pending} pending · ${ready} ready to build` };
+  return { ok: true, detail: `${items.length} items · ${readyToGroom} ready-to-groom · ${blocked} groomer-blocked · ${ready} ready to build` };
 }

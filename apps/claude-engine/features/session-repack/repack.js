@@ -14,7 +14,9 @@ import path from 'node:path';
 
 const TOOL_FILE_WRITERS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
-// First user line of an automated agent run looks like "# Something Agent …".
+// Sentinel prepended to prompt files that the scheduler runs.
+const AUTOMATED_SENTINEL = '[automated]';
+// Fallback heuristic for sessions that predate the sentinel convention.
 const AGENT_HEADER = /^#\s.*\bagent\b/i;
 
 export function projectsDir(env = process.env) {
@@ -61,6 +63,99 @@ async function parseFile(file) {
 }
 
 /**
+ * Scan all transcripts and return records grouped by date → session.
+ * Each session is bucketed by its first timestamped record's date.
+ * Dateless metadata records (ai-title, mode, etc.) inherit the session's date.
+ * Dates newest-first; sessions within a date newest-last-activity-first.
+ * Pure + zero-cost.
+ */
+export async function scanGrouped({ type = 'all', env = process.env } = {}) {
+  const root = projectsDir(env);
+  let folders;
+  try {
+    folders = await fs.readdir(root);
+  } catch {
+    return { dates: [], counts: {} };
+  }
+
+  const sessions = new Map();
+  const counts = {};
+
+  for (const folder of folders) {
+    const dir = path.join(root, folder);
+    let files;
+    try {
+      files = (await fs.readdir(dir)).filter((n) => n.endsWith('.jsonl'));
+    } catch {
+      continue;
+    }
+    for (const name of files) {
+      const raw = await parseFile(path.join(dir, name));
+      if (!raw) continue;
+      const sid = name.replace(/\.jsonl$/, '');
+      const stamps = raw.map((r) => r.timestamp).filter(Boolean).sort();
+      const firstDate = stamps[0]?.slice(0, 10) || 'unknown';
+      const lastDate = stamps[stamps.length - 1]?.slice(0, 10) || firstDate;
+      const aiTitle = raw.find((r) => r.type === 'ai-title')?.aiTitle;
+      const cwd = raw.find((r) => r.cwd)?.cwd || folder;
+      for (const r of raw) counts[r.type] = (counts[r.type] || 0) + 1;
+      sessions.set(sid, { sid, project: cwd, firstDate, lastDate, aiTitle, records: raw });
+    }
+  }
+
+  const dateMap = new Map();
+  for (const s of sessions.values()) {
+    if (!dateMap.has(s.firstDate)) dateMap.set(s.firstDate, []);
+    dateMap.get(s.firstDate).push(s);
+  }
+
+  const dates = [...dateMap.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([date, sess]) => ({
+      date,
+      sessions: sess
+        .sort((a, b) => b.lastDate.localeCompare(a.lastDate))
+        .map((s) => ({
+          ...s,
+          records: type === 'all' ? s.records : s.records.filter((r) => r.type === type),
+        }))
+        .filter((s) => s.records.length > 0),
+    }))
+    .filter((d) => d.sessions.length > 0);
+
+  return { dates, counts };
+}
+
+/** Locate a session's transcript file by id across all project folders. */
+export async function findSessionFile(sessionId, env = process.env) {
+  const root = projectsDir(env);
+  let folders;
+  try {
+    folders = await fs.readdir(root);
+  } catch {
+    return null;
+  }
+  for (const folder of folders) {
+    const file = path.join(root, folder, `${sessionId}.jsonl`);
+    try {
+      await fs.access(file);
+      return file;
+    } catch {
+      /* not in this folder */
+    }
+  }
+  return null;
+}
+
+/** Read + parse all raw records for a session. Returns { file, records } or null. */
+export async function readSessionRecords(sessionId, env = process.env) {
+  const file = await findSessionFile(sessionId, env);
+  if (!file) return null;
+  const records = await parseFile(file);
+  return { file, records: records || [] };
+}
+
+/**
  * Build one session's repack from its parsed records, scoped to `date`.
  * Returns null if the session had no activity on that date.
  */
@@ -104,9 +199,10 @@ function repackSession(sessionId, records, date) {
     }
   }
 
-  const firstPromptLine = (prompts[0] || '').split('\n')[0];
+  const firstPrompt = prompts[0] || '';
+  const firstPromptLine = firstPrompt.split('\n')[0];
   let kind = 'interactive';
-  if (AGENT_HEADER.test(firstPromptLine)) kind = 'automated';
+  if (firstPromptLine.trim() === AUTOMATED_SENTINEL || AGENT_HEADER.test(firstPromptLine)) kind = 'automated';
   else if (sidechain && !firstUser) kind = 'subagent';
 
   return {

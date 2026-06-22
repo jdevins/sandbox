@@ -1,3 +1,4 @@
+[automated]
 # Backlog Review Agent
 
 Read the file `data/backlog.json`.

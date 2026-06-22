@@ -3,7 +3,7 @@ import path from 'node:path';
 import cron from 'node-cron';
 import { html } from '../../lib/html.js';
 import { jsonStore } from '../../lib/store.js';
-import { buildDayRepack } from './repack.js';
+import { buildDayRepack, readSessionRecords, scanGrouped } from './repack.js';
 import { summarizeDay } from './summarize.js';
 
 export const meta = {
@@ -65,7 +65,7 @@ export function createFeature(ctx) {
       ${ui.pageHead({
         title: '📋 Session Repack',
         subtitle: 'Zero-cost daily recap of Claude work. Summaries are opt-in (LLM).',
-        actions: ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today', primary: true }),
+        actions: html`${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today', primary: true })}`,
       })}
       <div class="meta">Provider for summaries: <strong>${provider.name}</strong></div>
       ${days.length ? ui.grid(cards) : ui.empty('No repacks yet — run “Repack today”.')}`;
@@ -75,6 +75,93 @@ export function createFeature(ctx) {
   router.post('/run', async (req, res) => {
     const day = await runRepack(req.body?.date || today());
     res.redirect(`${base}/${day.date}`);
+  });
+
+  // ── Historical JSONL ───────────────────────────────────────────────────────
+  // Flat, cross-session feed of raw records, newest first. No day selection.
+  // Registered before /:date so the literal "raw" isn't parsed as a date.
+  router.get('/raw', async (req, res) => {
+    const type = req.query.type || 'all';
+    const excludeRaw = req.query.exclude || '';
+    const includeRaw = req.query.include || '';
+    const excludeTerms = excludeRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const includeTerms = includeRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const { dates, counts } = await scanGrouped({ type });
+
+    const sessionVisible = (s) => {
+      const haystack = (s.aiTitle || s.sid).toLowerCase();
+      if (includeTerms.length && !includeTerms.some((t) => haystack.includes(t))) return false;
+      if (excludeTerms.length && excludeTerms.some((t) => haystack.includes(t))) return false;
+      return true;
+    };
+    const filteredDates = dates
+      .map((d) => ({ ...d, sessions: d.sessions.filter(sessionVisible) }))
+      .filter((d) => d.sessions.length > 0);
+
+    const qs = (overrides) => {
+      const p = new URLSearchParams({ type, exclude: excludeRaw, include: includeRaw, ...overrides });
+      return `${base}/raw?${p}`;
+    };
+
+    const inputStyle = 'background:var(--bg-elev-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px';
+
+    const totalAll = Object.values(counts).reduce((a, b) => a + b, 0);
+    const chip = (label, t, n) =>
+      ui.btn({ href: qs({ type: t }), label: `${label} (${n})`, primary: type === t });
+
+    const filterForm = html`<form method="GET" action="${base}/raw" class="row" style="gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+      <input type="hidden" name="type" value="${type}"/>
+      <input type="text" name="include" value="${includeRaw}" placeholder="include: term1, term2, …" style="flex:1;min-width:180px;max-width:320px;${inputStyle}"/>
+      <input type="text" name="exclude" value="${excludeRaw}" placeholder="exclude: term1, term2, …" style="flex:1;min-width:180px;max-width:320px;${inputStyle}"/>
+      <button class="btn primary" type="submit">Apply</button>
+      ${(includeTerms.length || excludeTerms.length) ? html`<a class="btn" href="${qs({ include: '', exclude: '' })}">Clear</a>` : ''}
+    </form>`;
+
+    const filters = html`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">
+      ${chip('All', 'all', totalAll)}
+      ${Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([t, n]) => chip(t, t, n))}
+    </div>`;
+
+    const totalSessions = filteredDates.reduce((a, d) => a + d.sessions.length, 0);
+    const activeFilters = [
+      includeTerms.length ? `including: ${includeTerms.join(', ')}` : '',
+      excludeTerms.length ? `excluding: ${excludeTerms.join(', ')}` : '',
+    ].filter(Boolean);
+    const filterInfo = activeFilters.length
+      ? html`<div class="meta" style="margin-bottom:12px">${activeFilters.join(' · ')} · ${totalSessions} session${totalSessions === 1 ? '' : 's'} shown</div>`
+      : '';
+
+    const sections = filteredDates.map((d) => {
+      const sessionBlocks = d.sessions.map((s) => {
+        const title = s.aiTitle || s.sid.slice(0, 8);
+        const rows = s.records.map(
+          (r) => html`<details style="margin:4px 0;padding:4px 8px;border-left:2px solid var(--border)">
+            <summary style="cursor:pointer"><code>${r.type}</code> <span class="dim">${(r.timestamp || '').slice(11, 19) || '—'}</span> — ${recordPreview(r)}</summary>
+            <pre class="eng-source" style="white-space:pre-wrap;margin-top:6px">${JSON.stringify(r, null, 2)}</pre>
+          </details>`,
+        );
+        return html`<details class="card" style="margin:8px 0">
+          <summary><strong>${title}</strong>
+            <span class="badge">${shortProject(s.project)}</span>
+            <span class="dim">${s.records.length} record${s.records.length === 1 ? '' : 's'}</span>
+          </summary>
+          <div style="margin-top:8px">${rows}</div>
+        </details>`;
+      });
+      return html`<h3 class="eng-section" style="margin-top:20px">${d.date}</h3>${sessionBlocks}`;
+    });
+
+    const body = html`
+      ${ui.pageHead({
+        title: '🔍 Historical JSONL',
+        subtitle: 'All transcript records grouped by date → session, newest first.',
+        actions: ui.btn({ href: base, label: '← Repacks' }),
+      })}
+      ${filterForm}
+      ${filters}
+      ${filterInfo}
+      ${filteredDates.length ? sections : ui.empty('No sessions match current filters.')}`;
+    res.send(shell('Historical JSONL', body, [...crumb, { href: '#', label: 'historical' }]));
   });
 
   // ── Day detail ─────────────────────────────────────────────────────────────
@@ -108,6 +195,53 @@ export function createFeature(ctx) {
             )}`
         : ''}`;
     res.send(shell(day.date, body, [...crumb, { href: `${base}/${day.date}`, label: day.date }]));
+  });
+
+  // Raw JSONL viewer — finds the session's transcript file and presents its
+  // records as a structured, collapsible list (zero-cost; just reads the file).
+  router.get('/:date/:sessionId/raw', async (req, res) => {
+    const { date, sessionId } = req.params;
+    const filter = req.query.type || 'all';
+    const found = await readSessionRecords(sessionId);
+    if (!found) {
+      return res.send(shell('Missing', ui.empty(`No transcript file found for session ${sessionId}.`)));
+    }
+
+    // Title from the day repack if we have it; fall back to the id.
+    let title = sessionId.slice(0, 8);
+    try {
+      const day = await store.get(date);
+      title = day.sessions.find((s) => s.sessionId === sessionId)?.title || title;
+    } catch {
+      /* no repack for that day — fine */
+    }
+
+    const counts = found.records.reduce((acc, r) => ((acc[r.type] = (acc[r.type] || 0) + 1), acc), {});
+    const shown = filter === 'all' ? found.records : found.records.filter((r) => r.type === filter);
+
+    const chip = (label, type, n) =>
+      ui.btn({ href: `${base}/${date}/${sessionId}/raw?type=${type}`, label: `${label} (${n})`, primary: filter === type });
+    const filters = html`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:12px">
+      ${chip('All', 'all', found.records.length)}
+      ${Object.entries(counts).map(([t, n]) => chip(t, t, n))}
+    </div>`;
+
+    const rows = shown.map(
+      (r) => html`<details class="card" style="margin:6px 0">
+        <summary><code>${r.type}</code> <span class="dim">${(r.timestamp || '').slice(11, 19)}</span> — ${recordPreview(r)}</summary>
+        <pre class="eng-source" style="white-space:pre-wrap">${JSON.stringify(r, null, 2)}</pre>
+      </details>`,
+    );
+
+    const body = html`
+      ${ui.pageHead({
+        title: `🔍 Raw JSONL · ${title}`,
+        subtitle: `${found.records.length} records · ${found.file}`,
+        actions: ui.btn({ href: `${base}/${date}`, label: '← Day' }),
+      })}
+      ${filters}
+      ${shown.length ? rows : ui.empty('No records of that type.')}`;
+    res.send(shell(`Raw · ${title}`, body, [...crumb, { href: `${base}/${date}`, label: date }, { href: '#', label: 'raw' }]));
   });
 
   // Stage 2 — summarize all unsummarized interactive sessions for a day.
@@ -154,11 +288,32 @@ export function createFeature(ctx) {
         ${s.outcome ? html`<div class="meta"><strong>Ended:</strong> ${s.outcome.slice(0, 200)}</div>` : ''}`,
       actions: [
         ui.btn({ action: 'post', name: `${base}/${date}/summarize/${s.sessionId}`, label: s.summary ? '✨ Re-summarize' : '✨ Summarize (LLM)' }),
+        ui.btn({ href: `${base}/${date}/${s.sessionId}/raw`, label: '🔍 Raw JSONL' }),
       ],
     });
   }
 
   return router;
+}
+
+// One-line preview for a raw record's collapsed summary row.
+function recordPreview(r) {
+  const clip = (s) => String(s).replace(/\s+/g, ' ').trim().slice(0, 90);
+  if (r.type === 'ai-title') return clip(r.aiTitle);
+  if (r.type === 'queue-operation') return clip(r.operation);
+  if (r.type === 'system') return clip(r.subtype || r.level || '');
+  const c = r.message?.content;
+  if (typeof c === 'string') return clip(c);
+  if (Array.isArray(c)) {
+    const parts = c.map((b) => {
+      if (b.type === 'text') return clip(b.text);
+      if (b.type === 'tool_use') return `🔧 ${b.name}`;
+      if (b.type === 'tool_result') return '↩ tool_result';
+      return b.type;
+    });
+    return clip(parts.join(' · '));
+  }
+  return '';
 }
 
 function fmtTokens(t = { in: 0, out: 0, cache: 0 }) {

@@ -10,7 +10,7 @@
   {
     "id": "backlog-groom",
     "name": "Backlog Groomer",
-    "cron": "0 */2 * * *",
+    "cron": "0 8 */7 * *",
     "prompt": "prompts/backlog-groom.md",
     "enabled": true,
     "description": "Annotator agent — estimates, flags one-way doors, and challenges usefulness of pending items. Read-only on the repo; append-only on the backlog."
