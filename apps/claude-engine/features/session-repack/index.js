@@ -4,7 +4,7 @@ import cron from 'node-cron';
 import { html } from '../../lib/html.js';
 import { jsonStore } from '../../lib/store.js';
 import { buildDayRepack, readSessionRecords, scanGrouped } from './repack.js';
-import { summarizeDay } from './summarize.js';
+import { summarizeDay, summarizeDayReport, DEFAULT_REPORT_SYSTEM } from './summarize.js';
 
 export const meta = {
   name: 'Session Repack',
@@ -19,6 +19,13 @@ export function createFeature(ctx) {
   const { ui, page, provider, base, paths } = ctx;
   const store = jsonStore({ dir: path.join(paths.data, 'repacks') });
   const router = express.Router();
+
+  async function getConfig() {
+    try { return await store.get('config'); } catch { return {}; }
+  }
+  async function saveConfig(data) {
+    await store.save({ id: 'config', ...data });
+  }
 
   const crumb = [{ href: base, label: 'Repacks' }];
   const shell = (title, body, breadcrumb = crumb) =>
@@ -49,7 +56,7 @@ export function createFeature(ctx) {
 
   // ── Library: all repacked days ─────────────────────────────────────────────
   router.get('/', async (req, res) => {
-    const days = await store.list();
+    const days = (await store.list()).filter((d) => Array.isArray(d.sessions));
     const cards = days.map((d) => {
       const real = d.sessions.filter((s) => s.kind === 'interactive');
       const summarized = real.filter((s) => s.summary).length;
@@ -84,9 +91,17 @@ export function createFeature(ctx) {
     const type = req.query.type || 'all';
     const excludeRaw = req.query.exclude || '';
     const includeRaw = req.query.include || '';
+    const days = req.query.days === 'all' ? null : parseInt(req.query.days || '14', 10);
     const excludeTerms = excludeRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     const includeTerms = includeRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    const { dates, counts } = await scanGrouped({ type });
+
+    let afterDate = null;
+    if (days) {
+      const d = new Date();
+      d.setDate(d.getDate() - days);
+      afterDate = d.toISOString().slice(0, 10);
+    }
+    const { dates, counts } = await scanGrouped({ type, afterDate });
 
     const sessionVisible = (s) => {
       const haystack = (s.aiTitle || s.sid).toLowerCase();
@@ -99,7 +114,7 @@ export function createFeature(ctx) {
       .filter((d) => d.sessions.length > 0);
 
     const qs = (overrides) => {
-      const p = new URLSearchParams({ type, exclude: excludeRaw, include: includeRaw, ...overrides });
+      const p = new URLSearchParams({ type, exclude: excludeRaw, include: includeRaw, days: days || 'all', ...overrides });
       return `${base}/raw?${p}`;
     };
 
@@ -108,6 +123,13 @@ export function createFeature(ctx) {
     const totalAll = Object.values(counts).reduce((a, b) => a + b, 0);
     const chip = (label, t, n) =>
       ui.btn({ href: qs({ type: t }), label: `${label} (${n})`, primary: type === t });
+
+    const windowChip = (label, d) =>
+      ui.btn({ href: qs({ days: d }), label, primary: String(days || 'all') === String(d) });
+    const windowNav = html`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:12px">
+      <span class="dim" style="line-height:28px;font-size:12px">Window:</span>
+      ${windowChip('7d', '7')} ${windowChip('14d', '14')} ${windowChip('30d', '30')} ${windowChip('All', 'all')}
+    </div>`;
 
     const filterForm = html`<form method="GET" action="${base}/raw" class="row" style="gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
       <input type="hidden" name="type" value="${type}"/>
@@ -151,17 +173,50 @@ export function createFeature(ctx) {
       return html`<h3 class="eng-section" style="margin-top:20px">${d.date}</h3>${sessionBlocks}`;
     });
 
+    const windowInfo = afterDate
+      ? `Showing sessions with activity since ${afterDate}.`
+      : 'Showing all sessions (no date filter).';
+
     const body = html`
       ${ui.pageHead({
         title: '🔍 Historical JSONL',
-        subtitle: 'All transcript records grouped by date → session, newest first.',
+        subtitle: 'Transcript records grouped by date → session, newest first.',
         actions: ui.btn({ href: base, label: '← Repacks' }),
       })}
+      ${windowNav}
       ${filterForm}
       ${filters}
-      ${filterInfo}
+      ${filterInfo || html`<div class="meta" style="margin-bottom:12px">${windowInfo} ${totalSessions} session${totalSessions === 1 ? '' : 's'}.</div>`}
       ${filteredDates.length ? sections : ui.empty('No sessions match current filters.')}`;
     res.send(shell('Historical JSONL', body, [...crumb, { href: '#', label: 'historical' }]));
+  });
+
+  // ── Report prompt editor ───────────────────────────────────────────────────
+  router.get('/prompt', async (req, res) => {
+    const config = await getConfig();
+    const current = config.reportPrompt || DEFAULT_REPORT_SYSTEM;
+    const back = req.query.back || base;
+    const body = html`
+      ${ui.pageHead({
+        title: '✏️ Edit Report Prompt',
+        subtitle: 'System prompt used when generating executive day reports.',
+        actions: ui.btn({ href: back, label: '← Back' }),
+      })}
+      <form method="POST" action="${base}/prompt">
+        <input type="hidden" name="back" value="${back}"/>
+        <textarea name="prompt" style="width:100%;min-height:300px;font-family:monospace;font-size:13px;background:var(--bg-elev-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:12px;box-sizing:border-box;resize:vertical">${current}</textarea>
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn primary" type="submit">Save</button>
+          <a class="btn" href="${back}">Cancel</a>
+        </div>
+      </form>`;
+    res.send(shell('Edit Report Prompt', body, [...crumb, { href: '#', label: 'prompt' }]));
+  });
+
+  router.post('/prompt', async (req, res) => {
+    const prompt = (req.body?.prompt || '').trim();
+    if (prompt) await saveConfig({ reportPrompt: prompt });
+    res.redirect(req.body?.back || base);
   });
 
   // ── Day detail ─────────────────────────────────────────────────────────────
@@ -175,17 +230,30 @@ export function createFeature(ctx) {
     const real = day.sessions.filter((s) => s.kind === 'interactive');
     const other = day.sessions.filter((s) => s.kind !== 'interactive');
     const pending = real.filter((s) => !s.summary).length;
+    const promptEditHref = `${base}/prompt?back=${encodeURIComponent(`${base}/${day.date}`)}`;
+
+    const reportSection = day.report
+      ? html`<div class="card" style="margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <strong>📊 Executive Report</strong>
+            <span class="dim">· ${day.reportMeta?.provider || 'llm'} · ${day.reportAt?.slice(0, 10) || ''}</span>
+          </div>
+          <div style="white-space:pre-wrap;line-height:1.7;font-size:14px">${day.report}</div>
+        </div>`
+      : '';
 
     const body = html`
       ${ui.pageHead({
         title: `📋 ${day.date}`,
         subtitle: `${real.length} interactive · ${fmtTokens(day.tokens)} · generated ${day.generatedAt.slice(11, 16)}`,
-        actions: html`${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Re-repack' })}${
-          pending
-            ? ui.btn({ action: 'post', name: `${base}/${day.date}/summarize`, label: `✨ Summarize ${pending} (LLM)`, primary: true })
-            : ''
-        }`,
+        actions: html`
+          ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Re-repack' })}
+          ${pending ? ui.btn({ action: 'post', name: `${base}/${day.date}/summarize`, label: `✨ Summarize ${pending} (LLM)`, primary: true }) : ''}
+          ${ui.btn({ action: 'post', name: `${base}/${day.date}/report`, label: day.report ? '📊 Re-generate Report' : '📊 Generate Report (LLM)', primary: !day.report })}
+          <a class="btn" href="${promptEditHref}" title="Edit report prompt" style="padding:0 10px">✏️</a>
+        `,
       })}
+      ${reportSection}
       ${real.length ? real.map((s) => sessionCard(s, day.date)) : ui.empty('No interactive sessions this day.')}
       ${other.length
         ? html`<h3 class="eng-section">Automated / subagent runs (${other.length})</h3>
@@ -254,6 +322,17 @@ export function createFeature(ctx) {
   router.post('/:date/summarize/:sessionId', async (req, res) => {
     await summarizeWrap(req.params.date, [req.params.sessionId]);
     res.redirect(`${base}/${req.params.date}`);
+  });
+
+  // Stage 2 — generate executive day report.
+  router.post('/:date/report', async (req, res) => {
+    const { date } = req.params;
+    let day;
+    try { day = await store.get(date); } catch { return res.redirect(`${base}/${date}`); }
+    const config = await getConfig();
+    await summarizeDayReport(day, provider, config.reportPrompt || DEFAULT_REPORT_SYSTEM);
+    await store.save(day);
+    res.redirect(`${base}/${date}`);
   });
 
   async function summarizeWrap(date, which) {

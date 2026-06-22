@@ -1,17 +1,54 @@
 {
   "id": "2026-06-22",
-  "createdAt": "2026-06-22T03:55:05.427Z",
+  "createdAt": "2026-06-22T17:55:18.184Z",
   "date": "2026-06-22",
-  "generatedAt": "2026-06-22T03:55:05.427Z",
+  "generatedAt": "2026-06-22T17:55:18.183Z",
   "counts": {
-    "interactive": 1
+    "interactive": 4
   },
   "tokens": {
-    "in": 122,
-    "out": 103867,
-    "cache": 4872328
+    "in": 507,
+    "out": 178036,
+    "cache": 11877841
   },
   "sessions": [
+    {
+      "sessionId": "4622a000-9405-4794-ba2f-edf05ae04f32",
+      "title": "Hook up LLM mock summarizer for session repack",
+      "project": "C:\\Sandbox",
+      "branch": "main",
+      "kind": "interactive",
+      "start": "2026-06-22T13:13:27.862Z",
+      "end": "2026-06-22T14:23:43.610Z",
+      "msgCount": 50,
+      "tokens": {
+        "in": 96,
+        "out": 23977,
+        "cache": 1263165
+      },
+      "prompts": [
+        "session repack feature. we have an llm mock summarizer. can we hook it up? I want a starting prompt: \"Summarize the activities and interactions for an executive asking a few questions: What did I used",
+        "[Request interrupted by user]",
+        "resume",
+        "yes. add small edit button next to LLM summarizer button to open the prompt for edits if needed."
+      ],
+      "filesTouched": [
+        "C:\\Sandbox\\apps\\claude-engine\\features\\session-repack\\summarize.js",
+        "C:\\Sandbox\\apps\\claude-engine\\features\\session-repack\\index.js"
+      ],
+      "commands": [],
+      "outcome": "Good. The changes are clean. Here's what's wired up: **`summarize.js`** - `DEFAULT_REPORT_SYSTEM` — the executive prompt, exported so it can be edited/overridden - `summarizeDayReport(day, provider, systemPrompt)` — aggregates all interactive sessions, calls provider, stores `day.report` + `day.reportAt` + `day.reportMeta` **`index.js`** - `getConfig()` / `saveConfig()` — persist the custom prompt",
+      "summary": "「mock reply」 170 input tokens(ish). Echo: You write one-line status entries for a daily engineering report. Given a repacked Claude Code session (prompts, files touched, commands, outcome), reply with a…",
+      "summarizedAt": "2026-06-22T17:55:20.308Z",
+      "summaryMeta": {
+        "provider": "mock",
+        "model": "mock-1",
+        "usage": {
+          "input": 170,
+          "output": 30
+        }
+      }
+    },
     {
       "sessionId": "1c70d8ca-ce52-47d7-8b37-8ba42c4bd45f",
       "title": "Assess markitdown feature and port to different server",
@@ -19,12 +56,12 @@
       "branch": "main",
       "kind": "interactive",
       "start": "2026-06-22T03:11:53.156Z",
-      "end": "2026-06-22T03:50:54.174Z",
-      "msgCount": 117,
+      "end": "2026-06-22T04:24:30.055Z",
+      "msgCount": 147,
       "tokens": {
-        "in": 122,
-        "out": 103867,
-        "cache": 4872328
+        "in": 152,
+        "out": 107757,
+        "cache": 6955327
       },
       "prompts": [
         "assess the markitdown feature and determine the bests mechanism to port it to a different server. include option for python executable.",
@@ -45,15 +82,113 @@
         "C:\\Sandbox\\apps\\markitdown\\service\\ui.html",
         "C:\\Sandbox\\apps\\markitdown\\service\\markitdown.spec",
         "C:\\Sandbox\\apps\\markitdown\\lib\\build.js",
-        "C:\\Sandbox\\package.json"
+        "C:\\Sandbox\\package.json",
+        "C:\\Sandbox\\.gitignore"
       ],
       "commands": [
         "npm run markitdown:build 2>&1",
-        "ls -lh apps/markitdown/dist/markitdown/markitdown.exe && du -sh apps/markitdown/dist/markitdown/"
+        "ls -lh apps/markitdown/dist/markitdown/markitdown.exe && du -sh apps/markitdown/dist/markitdown/",
+        "git remote -v",
+        "git status --short",
+        "cat .gitignore 2>/dev/null || echo \"(none)\"",
+        "cd C:/Sandbox && git add .gitignore package.json apps/markitdown/service/main.py apps/markitdown/service/ui.html apps/ma",
+        "cd C:/Sandbox && git commit -m \"$(cat <<'EOF'",
+        "cd C:/Sandbox && git push origin main"
       ],
-      "outcome": "Done. It compiled cleanly — no errors, only expected DLL warnings (system libs that are always present on Windows). **Results:** - `markitdown.exe` — 17MB - Full dist folder — 197MB (onnxruntime + numpy + pandas from `markitdown[all]` are the bulk) **To share:** zip `apps/markitdown/dist/markitdown/` and send it. Recipient unzips, double-clicks `markitdown.exe`, Chrome opens at `http://127.0.0.1:8",
-      "summary": null,
-      "summarizedAt": null
+      "outcome": "That's the launcher checking for the venv at startup. Two paths depending on what's on that server: **Python is available there:** ``` npm run markitdown:setup ``` That's it — creates the venv and installs markitdown. One-time, then it auto-starts. **No Python on that server:** Set env vars to point the Node app at the Python service running somewhere else: ``` MARKITDOWN_LAUNCH=external MARKITDOW",
+      "summary": "「mock reply」 331 input tokens(ish). Echo: You write one-line status entries for a daily engineering report. Given a repacked Claude Code session (prompts, files touched, commands, outcome), reply with a…",
+      "summarizedAt": "2026-06-22T17:55:52.839Z",
+      "summaryMeta": {
+        "provider": "mock",
+        "model": "mock-1",
+        "usage": {
+          "input": 331,
+          "output": 30
+        }
+      }
+    },
+    {
+      "sessionId": "81a488af-de55-456d-8c78-44f9c6f7cb83",
+      "title": "Write prompt for port catalog CLI routing",
+      "project": "C:\\Sandbox",
+      "branch": "main",
+      "kind": "interactive",
+      "start": "2026-06-22T04:01:41.721Z",
+      "end": "2026-06-22T04:10:45.491Z",
+      "msgCount": 69,
+      "tokens": {
+        "in": 244,
+        "out": 45244,
+        "cache": 3388307
+      },
+      "prompts": [
+        "look at port catalog -> route through cli seam write the prompt. first variant is for node server. claude-engine does not exist on the target server. avoid specific references or links that appear on ",
+        "is port available on github",
+        "yes",
+        "add an entry for markitdown core app. Assume UI is to be kept as is."
+      ],
+      "filesTouched": [
+        "C:\\Sandbox\\apps\\claude-engine\\data\\port-catalog\\engine-provider.json",
+        "C:\\Sandbox\\apps\\claude-engine\\features\\port-catalog\\seeds.js",
+        "C:\\Sandbox\\apps\\claude-engine\\data\\port-catalog\\markitdown.json"
+      ],
+      "commands": [
+        "git remote -v && git log --oneline -5",
+        "git status --short && git diff --stat HEAD",
+        "git add apps/claude-engine/features/port-catalog/ apps/claude-engine/data/port-catalog/ apps/claude-engine/features/comm",
+        "git commit -m \"$(cat <<'EOF'",
+        "git push origin main",
+        "grep -E \"markitdown\" C:/Sandbox/package.json",
+        "git add apps/claude-engine/features/port-catalog/seeds.js apps/claude-engine/data/port-catalog/markitdown.json && git co"
+      ],
+      "outcome": "Done. Entry is live at [jdevins/sandbox](https://github.com/jdevins/sandbox). The prompt is structured in four steps: 1. **policy.json** — the JSON verbatim, since it's the source of truth for both layers 2. **Python service** — `main.py` contract (endpoints, tempfile pattern, .csv fallback, shutdown hook, standalone entry point) + `requirements.txt` 3. **Node lib files** — `env.js`, `launcher.js`",
+      "summary": "「mock reply」 219 input tokens(ish). Echo: You write one-line status entries for a daily engineering report. Given a repacked Claude Code session (prompts, files touched, commands, outcome), reply with a…",
+      "summarizedAt": "2026-06-22T17:55:52.839Z",
+      "summaryMeta": {
+        "provider": "mock",
+        "model": "mock-1",
+        "usage": {
+          "input": 219,
+          "output": 30
+        }
+      }
+    },
+    {
+      "sessionId": "f6a11fed-89d7-4766-b893-f5085a96e944",
+      "title": "Remove hello and guestbook features from sandbox",
+      "project": "C:\\Sandbox",
+      "branch": "main",
+      "kind": "interactive",
+      "start": "2026-06-22T04:04:31.423Z",
+      "end": "2026-06-22T04:04:47.746Z",
+      "msgCount": 15,
+      "tokens": {
+        "in": 15,
+        "out": 1058,
+        "cache": 271042
+      },
+      "prompts": [
+        "remove features hello and guestbook from sandbox. they were generics I never wanted. commit."
+      ],
+      "filesTouched": [],
+      "commands": [
+        "ls C:\\Sandbox\\apps\\hello && ls C:\\Sandbox\\apps\\guestbook",
+        "ls /c/Sandbox/apps/",
+        "ls /c/Sandbox/apps/hello/ && echo \"---\" && ls /c/Sandbox/apps/guestbook/",
+        "git rm -r apps/hello apps/guestbook",
+        "git commit -m \"$(cat <<'EOF'"
+      ],
+      "outcome": "Done. `hello` and `guestbook` are gone, committed on `main`.",
+      "summary": "「mock reply」 108 input tokens(ish). Echo: You write one-line status entries for a daily engineering report. Given a repacked Claude Code session (prompts, files touched, commands, outcome), reply with a…",
+      "summarizedAt": "2026-06-22T17:55:52.840Z",
+      "summaryMeta": {
+        "provider": "mock",
+        "model": "mock-1",
+        "usage": {
+          "input": 108,
+          "output": 30
+        }
+      }
     }
   ]
 }

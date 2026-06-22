@@ -69,7 +69,7 @@ async function parseFile(file) {
  * Dates newest-first; sessions within a date newest-last-activity-first.
  * Pure + zero-cost.
  */
-export async function scanGrouped({ type = 'all', env = process.env } = {}) {
+export async function scanGrouped({ type = 'all', afterDate = null, env = process.env } = {}) {
   const root = projectsDir(env);
   let folders;
   try {
@@ -90,6 +90,14 @@ export async function scanGrouped({ type = 'all', env = process.env } = {}) {
       continue;
     }
     for (const name of files) {
+      if (afterDate) {
+        try {
+          const { mtime } = await fs.stat(path.join(dir, name));
+          if (mtime.toISOString().slice(0, 10) < afterDate) continue;
+        } catch {
+          /* if stat fails, read it anyway */
+        }
+      }
       const raw = await parseFile(path.join(dir, name));
       if (!raw) continue;
       const sid = name.replace(/\.jsonl$/, '');

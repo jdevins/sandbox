@@ -11,6 +11,17 @@ const SYSTEM =
   'reply with a single sentence: what the user accomplished and whether it landed. ' +
   'No preamble, no markdown, under 30 words.';
 
+export const DEFAULT_REPORT_SYSTEM =
+  'You help an executive understand how a person used Claude during a workday.\n' +
+  'Given a list of Claude sessions (titles, questions asked, outcomes), answer ' +
+  'these four questions in plain language — no jargon, no tool names, no server details. ' +
+  'Focus on the intellectual and strategic work, not technical mechanics.\n\n' +
+  '1. What Claude was used for today\n' +
+  '2. What the user learned or built understanding of\n' +
+  '3. Areas where the work could improve or where Claude was under-leveraged\n' +
+  '4. Next opportunities worth exploring\n\n' +
+  'Format: four short paragraphs, one per question, labeled 1–4. Be concise and direct.';
+
 function promptFor(session) {
   const lines = [
     `Title: ${session.title}`,
@@ -21,6 +32,30 @@ function promptFor(session) {
   if (session.commands.length) lines.push(`Commands: ${session.commands.slice(0, 10).join(' ; ')}`);
   if (session.outcome) lines.push(`Closing message: ${session.outcome}`);
   return lines.join('\n');
+}
+
+function promptForDayReport(day) {
+  const sessions = day.sessions.filter((s) => s.kind === 'interactive');
+  const lines = [`Date: ${day.date}`, `Sessions: ${sessions.length}`];
+  for (const s of sessions) {
+    lines.push(`\n--- ${s.title} ---`);
+    if (s.prompts?.length) lines.push(`Asked: ${s.prompts.join(' | ')}`);
+    if (s.outcome) lines.push(`Outcome: ${s.outcome.slice(0, 300)}`);
+    if (s.summary) lines.push(`Summary: ${s.summary}`);
+  }
+  return lines.join('\n');
+}
+
+/** Generate an executive day report in place. Returns the mutated day. */
+export async function summarizeDayReport(day, provider, systemPrompt) {
+  const { text, usage, provider: name, model } = await provider.complete({
+    system: systemPrompt || DEFAULT_REPORT_SYSTEM,
+    prompt: promptForDayReport(day),
+  });
+  day.report = (text || '').trim();
+  day.reportAt = new Date().toISOString();
+  day.reportMeta = { provider: name, model, usage };
+  return day;
 }
 
 /** Summarize a single session in place. Returns the mutated session. */
