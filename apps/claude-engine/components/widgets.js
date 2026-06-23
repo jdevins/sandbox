@@ -23,8 +23,8 @@ export const empty = (msg) => html`<div class="empty">${msg}</div>`;
 
 export const badge = (text, kind = '') => html`<span class="badge ${kind}">${text}</span>`;
 
-export const btn = ({ href, label, action, name, primary, danger, method }) => {
-  const cls = `btn ${primary ? 'primary' : ''} ${danger ? 'danger' : ''}`.trim();
+export const btn = ({ href, label, action, name, primary, danger, llm, method }) => {
+  const cls = ['btn', primary ? 'primary' : '', danger ? 'danger' : '', llm ? 'llm' : ''].filter(Boolean).join(' ');
   if (href) return html`<a class="${cls}" href="${href}">${label}</a>`;
   return html`<button class="${cls}" data-action="${action || ''}" data-name="${name || ''}" data-method="${method || 'POST'}">${label}</button>`;
 };

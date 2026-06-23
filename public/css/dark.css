@@ -10,6 +10,8 @@
   --text-dim: #9aa7b4;
   --accent: #4f9cf9;
   --accent-dim: #1f3b5c;
+  --llm: #a371f7;
+  --llm-dim: #2d1b6e;
   --ok: #3fb950;
   --warn: #d29922;
   --bad: #f85149;
@@ -73,6 +75,8 @@ header.site .muted { color: var(--text-dim); font-size: 13px; }
 }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent-dim); border-color: var(--accent); }
+.btn.llm { background: var(--llm-dim); border-color: var(--llm); }
+.btn.llm:hover { filter: brightness(1.15); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .toolbar { margin-bottom: 20px; }

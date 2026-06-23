@@ -6,10 +6,11 @@
  *   model: string
  *   async complete({ system, prompt, model }) -> { text, usage, provider, model }
  *
- * The mock provider is the default so the whole engine runs offline and
- * deterministically. Swap in a real Anthropic provider by setting
- * ANTHROPIC_API_KEY (and implementing the call) without touching callers.
+ * Default: cliProvider — shells out to the local `claude -p` CLI, no API key needed.
+ * Set ENGINE_LLM=mock to force offline/deterministic mode.
  */
+
+import { spawn } from 'node:child_process';
 
 export function mockProvider() {
   return {
@@ -31,27 +32,44 @@ export function mockProvider() {
   };
 }
 
-/**
- * Placeholder for the live provider. Intentionally not wired — implement the
- * fetch to https://api.anthropic.com/v1/messages here when going live.
- */
-export function anthropicProvider({ apiKey, model = 'claude-opus-4-8' } = {}) {
+/** Shells out to the local `claude -p` CLI. No API key required. */
+export function cliProvider({ model } = {}) {
   return {
-    name: 'anthropic',
-    model,
-    async complete() {
-      throw new Error(
-        'anthropicProvider is not wired yet. Implement the API call in lib/provider.js ' +
-          'or unset ANTHROPIC_API_KEY to use the mock provider.',
-      );
+    name: 'cli',
+    model: model || 'claude',
+    async complete({ system, prompt } = {}) {
+      const fullPrompt = system
+        ? `<system>\n${system}\n</system>\n\n${prompt || ''}`
+        : (prompt || '');
+
+      return new Promise((resolve, reject) => {
+        const args = ['-p'];
+        if (model) args.push('--model', model);
+
+        const child = spawn('claude', args, { shell: true });
+        let output = '';
+        let errOut = '';
+
+        child.stdout.on('data', (d) => (output += d.toString()));
+        child.stderr.on('data', (d) => (errOut += d.toString()));
+        child.on('error', (err) => reject(new Error(`Failed to launch claude CLI: ${err.message}`)));
+        child.on('close', (code) => {
+          if (code !== 0 && !output.trim()) {
+            reject(new Error(`claude CLI exited ${code}: ${errOut.trim() || '(no output)'}`));
+          } else {
+            resolve({ text: output.trim(), usage: {}, provider: 'cli', model: model || 'claude' });
+          }
+        });
+
+        child.stdin.write(fullPrompt);
+        child.stdin.end();
+      });
     },
   };
 }
 
-/** Choose a provider from the environment. Defaults to mock. */
+/** Choose a provider from the environment. Defaults to local CLI. */
 export function getProvider(env = process.env) {
-  if (env.ANTHROPIC_API_KEY && env.ENGINE_LLM === 'anthropic') {
-    return anthropicProvider({ apiKey: env.ANTHROPIC_API_KEY });
-  }
-  return mockProvider();
+  if (env.ENGINE_LLM === 'mock') return mockProvider();
+  return cliProvider({ model: env.ENGINE_MODEL });
 }

@@ -134,6 +134,30 @@ export async function scanGrouped({ type = 'all', afterDate = null, env = proces
   return { dates, counts };
 }
 
+/**
+ * Stat all JSONL files and return every distinct date (YYYY-MM-DD) that has
+ * at least one session, using file mtime as a fast proxy. O(n) stats, no reads.
+ */
+export async function findAllDates(env = process.env) {
+  const root = projectsDir(env);
+  let folders;
+  try { folders = await fs.readdir(root); } catch { return []; }
+
+  const dateSet = new Set();
+  for (const folder of folders) {
+    const dir = path.join(root, folder);
+    let files;
+    try { files = (await fs.readdir(dir)).filter((n) => n.endsWith('.jsonl')); } catch { continue; }
+    for (const name of files) {
+      try {
+        const { mtime } = await fs.stat(path.join(dir, name));
+        dateSet.add(mtime.toISOString().slice(0, 10));
+      } catch { /* skip */ }
+    }
+  }
+  return [...dateSet].sort();
+}
+
 /** Locate a session's transcript file by id across all project folders. */
 export async function findSessionFile(sessionId, env = process.env) {
   const root = projectsDir(env);
