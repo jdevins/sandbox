@@ -18,6 +18,7 @@ npm run dev                       # run with auto-restart (node --watch server.j
 npm start                         # run once
 npm test                          # run all node:test files
 node --test test/smoke.test.js    # run a single test file
+npm run setup:hooks               # install git hooks (run once after clone)
 ```
 
 Server defaults to port 3000 (`PORT` env to change). Dashboard at `/`.
@@ -116,6 +117,16 @@ hand-edit.
 The **mock provider is the default** so everything runs offline and deterministically.
 `getProvider()` selects from env; to go live, implement `anthropicProvider` and set
 `ANTHROPIC_API_KEY` + `ENGINE_LLM=anthropic`. Callers never change.
+
+## Standards
+
+Active coding standards live in [`standards/index.js`](standards/index.js), organized by concern: `code`, `structure`, `ui`, `llm`, `versioning`.
+
+**Before declaring any task done**, verify the changes comply with applicable active rules. Load the relevant category — not the full list unless doing a sweep.
+
+Per-app exceptions are declared in [`standards/overrides.js`](standards/overrides.js) with a required reason. Three or more exceptions to the same rule signals the rule needs review.
+
+When a bug fix or rework reveals a pattern, propose a new rule: add it to `standards/index.js` with `status: 'proposed'`. User promotes to `active`.
 
 ## Conventions specific to this repo
 

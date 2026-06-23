@@ -1,0 +1,2 @@
+#!/bin/sh
+node .hooks/check-version.js

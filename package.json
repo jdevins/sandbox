@@ -9,6 +9,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test",
+    "setup:hooks": "git config core.hooksPath .hooks",
     "markitdown:setup": "node apps/markitdown/lib/setup.js",
     "markitdown:build": "node apps/markitdown/lib/build.js"
   },
