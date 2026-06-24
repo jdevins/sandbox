@@ -12,5 +12,7 @@ apps/markitdown/dist/
 apps/markitdown/data/runs/
 __pycache__/
 
-# repacks
+# repacks (machine-local raw transcript output; shared between machines via
+# explicit export/import, not git)
 apps/claude-engine/data/repacks
+apps/claude-engine/data/repack-imports

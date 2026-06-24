@@ -20,14 +20,23 @@ export function createFeature(ctx) {
   const { ui, page, provider, base, paths } = ctx;
   const store = jsonStore({ dir: path.join(paths.data, 'repacks') });
   const trendStore = jsonStore({ dir: path.join(paths.data, 'trends') });
+  // Config (prompt edits) lives outside data/repacks: that dir is gitignored
+  // because the day repacks it holds are regenerable local-transcript output,
+  // but the prompts the user authors there are not regenerable and must be checked in.
+  const configStore = jsonStore({ dir: path.join(paths.data, 'repack-config') });
+  // Days received from another machine's Export. Kept separate from `store` so
+  // a local re-repack/re-summarize never touches imported data, and imported
+  // sessions are excluded from local summarization by construction (they're
+  // simply not in `day.sessions`). Merged with local data only at render time.
+  const importStore = jsonStore({ dir: path.join(paths.data, 'repack-imports') });
   const router = express.Router();
 
   async function getConfig() {
-    try { return await store.get('config'); } catch { return {}; }
+    try { return await configStore.get('config'); } catch { return {}; }
   }
   async function saveConfig(data) {
     const prev = await getConfig();
-    await store.save({ id: 'config', ...prev, ...data });
+    await configStore.save({ id: 'config', ...prev, ...data });
   }
 
   const crumb = [{ href: base, label: 'Repacks' }];
@@ -161,9 +170,15 @@ export function createFeature(ctx) {
 
   // ── Library: all repacked days, grouped by week ────────────────────────────
   router.get('/', async (req, res) => {
-    const days = (await store.list())
+    const allDays = (await store.list())
       .filter((d) => Array.isArray(d.sessions))
       .sort((a, b) => b.date.localeCompare(a.date));
+    const pendingExport = allDays.filter((d) => !d.exported).length;
+
+    const statusFilter = req.query.status || 'all'; // all | submitted | pending
+    const days = statusFilter === 'all'
+      ? allDays
+      : allDays.filter((d) => (statusFilter === 'submitted' ? d.submitted : !d.submitted));
 
     const trends = await trendStore.list().catch(() => []);
     const weekTrend = new Map(trends.filter((t) => t.kind === 'week').map((t) => [t.start, t]));
@@ -184,9 +199,9 @@ export function createFeature(ctx) {
         return ui.card({
           title: d.date,
           // Summarized day → green check; otherwise the session count.
-          badge: summary
+          badge: html`${summary
             ? ui.badge('summarized', 'ok')
-            : ui.badge(`${real.length} session${real.length === 1 ? '' : 's'}`),
+            : ui.badge(`${real.length} session${real.length === 1 ? '' : 's'}`)}${d.submitted ? ` ${ui.badge('submitted', 'ok')}` : ''}`,
           // Summary replaces the repack info once present.
           desc: summary
             ? html`<div class="summary-text">${clip(summary, 280)}</div>`
@@ -242,7 +257,18 @@ export function createFeature(ctx) {
         ${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}
         ${ui.btn({ href: `${base}/prompt`, label: '✏️ Prompts' })}
         ${ui.btn({ action: 'post', name: `${base}/backfill`, label: '📥 Backfill history' })}
+        ${ui.btn({ action: 'post', name: `${base}/export`, label: `📤 Export new (${pendingExport})` })}
+        ${ui.btn({ href: `${base}/import`, label: '📥 Import' })}
       `)}`;
+
+    const statusChip = (label, val) => ui.btn({ href: `${base}?status=${val}`, label, primary: statusFilter === val });
+    const statusFilters = html`<div class="row" style="gap:6px;margin-bottom:12px">
+      ${statusChip('All', 'all')} ${statusChip('Submitted', 'submitted')} ${statusChip('Pending', 'pending')}
+    </div>`;
+
+    const notice = req.query.notice === 'nothing-to-export'
+      ? html`<div class="badge" style="margin-bottom:12px;display:inline-block">Nothing new to export — every local day is already exported.</div>`
+      : '';
 
     const body = html`
       ${ui.pageHead({
@@ -251,6 +277,8 @@ export function createFeature(ctx) {
         actions,
       })}
       <div class="meta">Provider for summaries: <strong>${provider.name}</strong></div>
+      ${notice}
+      ${statusFilters}
       ${sections.length ? sections : ui.empty('No repacks yet — run “Repack today”.')}`;
     res.send(shell('Repacks', body));
   });
@@ -258,6 +286,97 @@ export function createFeature(ctx) {
   router.post('/run', async (req, res) => {
     const day = await runRepack(req.body?.date || today());
     res.redirect(`${base}/${day.date}`);
+  });
+
+  // ── Export / Import ─────────────────────────────────────────────────────────
+  // Cross-machine sharing is explicit, not git: bundle local days that haven't
+  // been exported yet, download the file, email/copy it to the other machine,
+  // paste it into Import there. Marking `exported` is what makes repeated runs
+  // only ever ship what's new.
+  router.post('/export', async (req, res) => {
+    const config = await getConfig();
+    const label = config.sourceLabel || 'unlabeled';
+    const candidates = (await store.list()).filter((d) => Array.isArray(d.sessions) && !d.exported);
+    if (!candidates.length) return res.redirect(`${base}?notice=nothing-to-export`);
+
+    const exportedAt = new Date().toISOString();
+    const bundle = { exportedAt, label, days: candidates };
+    for (const day of candidates) {
+      day.exported = true;
+      day.exportedAt = exportedAt;
+      await store.save(day);
+    }
+    const filename = `repack-export-${label}-${exportedAt.slice(0, 10)}.json`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.type('application/json').send(JSON.stringify(bundle, null, 2));
+  });
+
+  router.get('/import', async (req, res) => {
+    const imports = (await importStore.list().catch(() => []))
+      .sort((a, b) => (b.importedAt || '').localeCompare(a.importedAt || ''));
+
+    const notice = req.query.imported !== undefined
+      ? html`<div class="badge" style="margin-bottom:12px;display:inline-block;border-color:var(--ok)">✓ Imported ${req.query.imported} day(s)${Number(req.query.skipped) ? `, skipped ${req.query.skipped} duplicate(s)` : ''}.</div>`
+      : '';
+    const errBanner = req.query.error
+      ? html`<div class="badge" style="margin-bottom:12px;display:inline-block;border-color:var(--bad)">⚠ Could not read that as an export bundle.</div>`
+      : '';
+
+    const body = html`
+      ${ui.pageHead({
+        title: '📥 Import',
+        subtitle: 'Paste the contents of an exported file from another machine.',
+        actions: ui.btn({ href: base, label: '← Repacks' }),
+      })}
+      ${notice}${errBanner}
+      ${ui.configForm({
+        action: `${base}/import`,
+        fields: [{ name: 'payload', label: 'Exported JSON', type: 'text', rows: 10, placeholder: 'Paste exported JSON here…' }],
+        submit: 'Import',
+      })}
+      <h3 class="eng-section">Imported so far (${imports.length})</h3>
+      ${imports.length
+        ? ui.table(
+            ['Date', 'From', 'Imported'],
+            imports.map((i) => [i.date, i.label, (i.importedAt || '').slice(0, 16).replace('T', ' ')]),
+          )
+        : ui.empty('Nothing imported yet.')}`;
+    res.send(shell('Import', body, [...crumb, { href: '#', label: 'import' }]));
+  });
+
+  router.post('/import', async (req, res) => {
+    let bundle;
+    try {
+      bundle = JSON.parse(req.body?.payload || '');
+    } catch {
+      return res.redirect(`${base}/import?error=1`);
+    }
+    if (!bundle || !Array.isArray(bundle.days) || !bundle.label) {
+      return res.redirect(`${base}/import?error=1`);
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    for (const day of bundle.days) {
+      if (!day?.date) continue;
+      const id = `${day.date}-${bundle.label}`;
+      const existing = await importStore.get(id).catch(() => null);
+      // Same source + same export run already imported — no-op.
+      if (existing && existing.exportedAt === bundle.exportedAt) {
+        skipped++;
+        continue;
+      }
+      await importStore.save({
+        id,
+        date: day.date,
+        label: bundle.label,
+        exportedAt: bundle.exportedAt,
+        importedAt: new Date().toISOString(),
+        repack: day,
+      });
+      imported++;
+    }
+    res.redirect(`${base}/import?imported=${imported}&skipped=${skipped}`);
   });
 
   // ── Historical JSONL ───────────────────────────────────────────────────────
@@ -542,6 +661,7 @@ export function createFeature(ctx) {
         fields: [
           { name: 'dailyPrompt', label: 'Daily summary prompt', type: 'text', rows: 12, value: daily, help: 'Summarizes one day from its sessions.' },
           { name: 'trendPrompt', label: 'Trend prompt', type: 'text', rows: 10, value: trend, help: 'Summarizes themes across a week or custom range.' },
+          { name: 'sourceLabel', label: 'Source label (this machine)', type: 'string', value: config.sourceLabel || '', placeholder: 'home, work, …', help: 'Tags this machine’s Exports so an Import on another machine can tell sources apart.' },
         ],
         extra: html`<input type="hidden" name="back" value="${back}"><a class="btn" href="${back}">Cancel</a>`,
         submit: 'Save',
@@ -552,9 +672,11 @@ export function createFeature(ctx) {
   router.post('/prompt', async (req, res) => {
     const dailyPrompt = (req.body?.dailyPrompt || '').trim();
     const trendPrompt = (req.body?.trendPrompt || '').trim();
+    const sourceLabel = (req.body?.sourceLabel || '').trim();
     const patch = {};
     if (dailyPrompt) patch.dailyPrompt = dailyPrompt;
     if (trendPrompt) patch.trendPrompt = trendPrompt;
+    patch.sourceLabel = sourceLabel; // allowed to clear
     if (Object.keys(patch).length) await saveConfig(patch);
     res.redirect(req.body?.back || base);
   });
@@ -567,20 +689,55 @@ export function createFeature(ctx) {
     } catch {
       return res.send(shell('Missing', ui.empty(`No repack for ${req.params.date} — run “Repack today”.`)));
     }
-    const real = day.sessions.filter((s) => s.kind === 'interactive');
-    const other = day.sessions.filter((s) => s.kind !== 'interactive');
+    const imports = (await importStore.list().catch(() => [])).filter((i) => i.date === day.date);
+
+    // Imported sessions count toward this page's stats/list like local ones,
+    // but they're tagged so the UI and the "Raw JSONL" link can tell them apart.
+    const sourceFilter = req.query.source || 'all'; // all | local | imported
+    const localSessions = day.sessions.map((s) => ({ ...s, source: 'local' }));
+    const importedSessions = imports.flatMap((imp) =>
+      (imp.repack?.sessions || []).map((s) => ({ ...s, source: 'imported', sourceLabel: imp.label })),
+    );
+    const allSessions = sourceFilter === 'local' ? localSessions
+      : sourceFilter === 'imported' ? importedSessions
+      : [...localSessions, ...importedSessions];
+    const real = allSessions.filter((s) => s.kind === 'interactive');
+    const other = allSessions.filter((s) => s.kind !== 'interactive');
+
     const summary = daySummary(day);
     const promptEditHref = `${base}/prompt?back=${encodeURIComponent(`${base}/${day.date}`)}`;
 
-    const summarySection = summary
-      ? html`<div class="card" style="margin-bottom:16px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <strong>✨ Daily summary</strong>
-            <span class="dim">· ${day.summaryMeta?.provider || day.reportMeta?.provider || 'llm'} · ${(day.summaryAt || day.reportAt || '').slice(0, 10)}</span>
-          </div>
-          <div class="summary-text lg">${summary}</div>
-        </div>`
-      : ui.empty('Not summarized yet — use Summarize below.');
+    const sourceChip = (label, val) => ui.btn({ href: `${base}/${day.date}?source=${val}`, label, primary: sourceFilter === val });
+    const sourceFilters = imports.length
+      ? html`<div class="row" style="gap:6px;margin-bottom:12px">${sourceChip('All', 'all')} ${sourceChip('Local', 'local')} ${sourceChip('Imported', 'imported')}</div>`
+      : '';
+
+    const importCards = imports.map((imp) => {
+      const impSummary = daySummary(imp.repack);
+      return html`<div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <strong>📥 Imported · ${imp.label}</strong>
+          <span class="dim">· ${(imp.importedAt || '').slice(0, 10)}</span>
+        </div>
+        ${impSummary ? html`<div class="summary-text">${impSummary}</div>` : ui.empty('No summary in this import.')}
+      </div>`;
+    });
+
+    const summarySection = html`
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <strong>✨ Local summary</strong>
+          <span class="dim">· ${day.summaryMeta?.provider || day.reportMeta?.provider || 'llm'} · ${(day.summaryAt || day.reportAt || '').slice(0, 10)}</span>
+        </div>
+        ${summary ? html`<div class="summary-text lg">${summary}</div>` : ui.empty('Not summarized yet — use Summarize below.')}
+      </div>
+      ${importCards}
+      ${imports.length
+        ? html`<div class="row" style="gap:8px;margin-bottom:16px;align-items:center">
+            ${ui.btn({ href: `${base}/${day.date}/merge`, label: day.submitted ? '🔀 Edit merged summary' : '🔀 Merge summaries', primary: !day.submitted })}
+            ${day.submitted ? ui.badge('submitted', 'ok') : ''}
+          </div>`
+        : ''}`;
 
     const body = html`
       ${ui.pageHead({
@@ -602,6 +759,7 @@ export function createFeature(ctx) {
         `,
       })}
       ${summarySection}
+      ${sourceFilters}
       <h3 class="eng-section">Sessions (${real.length})</h3>
       ${real.length ? real.map((s) => sessionRow(s, day.date)) : ui.empty('No interactive sessions this day.')}
       ${other.length
@@ -612,6 +770,54 @@ export function createFeature(ctx) {
             )}`
         : ''}`;
     res.send(shell(day.date, body, [...crumb, { href: `${base}/${day.date}`, label: day.date }]));
+  });
+
+  // ── Merge: blend the local summary with imported summaries by hand ─────────
+  router.get('/:date/merge', async (req, res) => {
+    const { date } = req.params;
+    let day;
+    try {
+      day = await store.get(date);
+    } catch {
+      day = { date, sessions: [] };
+    }
+    const imports = (await importStore.list().catch(() => [])).filter((i) => i.date === date);
+    const config = await getConfig();
+    const ownLabel = config.sourceLabel || 'local';
+
+    const scaffold = [
+      `Local (${ownLabel}):\n${daySummary(day) || '(no local summary)'}`,
+      ...imports.map((i) => `Imported (${i.label}):\n${daySummary(i.repack) || '(no summary)'}`),
+    ].join('\n\n');
+    const value = day.mergedSummary || scaffold;
+
+    const body = html`
+      ${ui.pageHead({
+        title: `🔀 Merge · ${date}`,
+        subtitle: day.submitted ? `Submitted ${(day.submittedAt || '').slice(0, 16).replace('T', ' ')}` : 'Not yet submitted.',
+        actions: ui.btn({ href: `${base}/${date}`, label: '← Day' }),
+      })}
+      ${ui.configForm({
+        action: `${base}/${date}/merge`,
+        fields: [{ name: 'mergedSummary', label: 'Merged summary', type: 'text', rows: 16, value }],
+        submit: day.submitted ? 'Save (update)' : 'Save & submit',
+      })}`;
+    res.send(shell('Merge', body, [...crumb, { href: `${base}/${date}`, label: date }, { href: '#', label: 'merge' }]));
+  });
+
+  router.post('/:date/merge', async (req, res) => {
+    const { date } = req.params;
+    let day;
+    try {
+      day = await store.get(date);
+    } catch {
+      day = { id: date, date, sessions: [] };
+    }
+    day.mergedSummary = (req.body?.mergedSummary || '').trim();
+    day.submitted = true;
+    day.submittedAt = new Date().toISOString();
+    await store.save(day);
+    res.redirect(`${base}/${date}`);
   });
 
   // Raw JSONL viewer — finds the session's transcript file and presents its
@@ -681,7 +887,7 @@ export function createFeature(ctx) {
       : '';
     return ui.card({
       title: s.title,
-      badge: ui.badge(fmtTokens(s.tokens)),
+      badge: html`${ui.badge(fmtTokens(s.tokens))}${s.source === 'imported' ? ui.badge(`📥 ${s.sourceLabel}`) : ''}`,
       desc: html`<div class="dim">${shortProject(s.project)}${s.branch ? ` · ${s.branch}` : ''} · ${s.start?.slice(11, 16)}–${s.end?.slice(11, 16)} · ${s.msgCount} msgs</div>
         ${s.prompts.length ? html`<div class="meta"><strong>Asked:</strong> ${s.prompts.slice(0, 3).join(' — ')}</div>` : ''}
         ${files}${cmds}
