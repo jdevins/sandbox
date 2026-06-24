@@ -1,17 +1,13 @@
 /**
- * Stage 2 — optional LLM summarization. Runs only when invoked from the UI, on
- * one / some / all not-yet-summarized sessions. This is the *only* part of the
- * feature that spends tokens. Uses the engine's swappable provider, so it is the
- * mock provider (free, offline) unless a live provider is configured.
+ * Stage 2 — optional LLM summarization. The only part of the feature that spends
+ * tokens. Two scopes, one shared shape:
+ *   - summarizeDay   → one summary for a whole day, from its sessions (daily prompt)
+ *   - summarizeTrend → one summary across many days (trend prompt)
+ * Uses the engine's swappable provider, so it's the mock provider (free, offline)
+ * unless a live provider is configured.
  */
 
-const SYSTEM =
-  'You write one-line status entries for a daily engineering report. ' +
-  'Given a repacked Claude Code session (prompts, files touched, commands, outcome), ' +
-  'reply with a single sentence: what the user accomplished and whether it landed. ' +
-  'No preamble, no markdown, under 30 words.';
-
-export const DEFAULT_REPORT_SYSTEM =
+export const DEFAULT_DAILY_SYSTEM =
   'You help an executive understand how a person used Claude during a workday.\n' +
   'Given a list of Claude sessions (titles, questions asked, outcomes), answer ' +
   'these four questions in plain language — no jargon, no tool names, no server details. ' +
@@ -22,69 +18,77 @@ export const DEFAULT_REPORT_SYSTEM =
   '4. Next opportunities worth exploring\n\n' +
   'Format: four short paragraphs, one per question, labeled 1–4. Be concise and direct.';
 
-function promptFor(session) {
-  const lines = [
-    `Title: ${session.title}`,
-    `Project: ${session.project}${session.branch ? ` (${session.branch})` : ''}`,
-    `Asks: ${session.prompts.join(' | ')}`,
-  ];
-  if (session.filesTouched.length) lines.push(`Files touched: ${session.filesTouched.join(', ')}`);
-  if (session.commands.length) lines.push(`Commands: ${session.commands.slice(0, 10).join(' ; ')}`);
-  if (session.outcome) lines.push(`Closing message: ${session.outcome}`);
-  return lines.join('\n');
-}
+export const DEFAULT_TREND_SYSTEM =
+  'You analyze how a person used Claude across multiple days.\n' +
+  'Given a sequence of daily summaries, identify the throughlines — not a day-by-day ' +
+  'recap. Surface: recurring themes and projects, how focus shifted over the period, ' +
+  'momentum (what is accelerating or stalling), and patterns worth acting on.\n\n' +
+  'Format: a few short paragraphs. Be concise, concrete, and forward-looking.';
 
-function promptForDayReport(day) {
-  const sessions = day.sessions.filter((s) => s.kind === 'interactive');
+// Migration-aware accessor: new day-level summary, falling back to the legacy
+// executive report so previously-reported days read as already-summarized.
+export const daySummary = (day) => day?.summary || day?.report || null;
+
+function promptForDay(day) {
+  const sessions = (day.sessions || []).filter((s) => s.kind === 'interactive');
   const lines = [`Date: ${day.date}`, `Sessions: ${sessions.length}`];
   for (const s of sessions) {
     lines.push(`\n--- ${s.title} ---`);
     if (s.prompts?.length) lines.push(`Asked: ${s.prompts.join(' | ')}`);
+    if (s.filesTouched?.length) lines.push(`Files: ${s.filesTouched.slice(0, 12).join(', ')}`);
     if (s.outcome) lines.push(`Outcome: ${s.outcome.slice(0, 300)}`);
-    if (s.summary) lines.push(`Summary: ${s.summary}`);
   }
   return lines.join('\n');
 }
 
-/** Generate an executive day report in place. Returns the mutated day. */
-export async function summarizeDayReport(day, provider, systemPrompt) {
+function promptForTrend(days) {
+  // days: array of day records, oldest → newest, each with a summary already.
+  const lines = [`Period: ${days[0]?.date} → ${days[days.length - 1]?.date}`, `Days: ${days.length}`];
+  for (const d of days) {
+    const s = daySummary(d);
+    if (!s) continue;
+    lines.push(`\n=== ${d.date} ===`, s.slice(0, 1200));
+  }
+  return lines.join('\n');
+}
+
+/** Generate one day-level summary in place. Returns the mutated day. */
+export async function summarizeDay(day, provider, systemPrompt) {
   const { text, usage, provider: name, model } = await provider.complete({
-    system: systemPrompt || DEFAULT_REPORT_SYSTEM,
-    prompt: promptForDayReport(day),
+    system: systemPrompt || DEFAULT_DAILY_SYSTEM,
+    prompt: promptForDay(day),
   });
-  day.report = (text || '').trim();
-  day.reportAt = new Date().toISOString();
-  day.reportMeta = { provider: name, model, usage };
+  day.summary = (text || '').trim();
+  day.summaryAt = new Date().toISOString();
+  day.summaryMeta = { provider: name, model, usage };
+  // Legacy report fields are now folded into summary; drop them so there is one
+  // source of truth going forward.
+  delete day.report;
+  delete day.reportAt;
+  delete day.reportMeta;
   return day;
 }
 
-/** Summarize a single session in place. Returns the mutated session. */
-export async function summarizeSession(session, provider) {
-  const { text, usage, provider: name, model } = await provider.complete({
-    system: SYSTEM,
-    prompt: promptFor(session),
-  });
-  session.summary = (text || '').trim();
-  session.summarizedAt = new Date().toISOString();
-  session.summaryMeta = { provider: name, model, usage };
-  return session;
-}
-
 /**
- * Summarize selected sessions in a day record. `which` is an array of
- * sessionIds, or 'unsummarized' for every session lacking a summary.
- * Skips automated/subagent runs unless explicitly named.
+ * Generate one trend summary over a set of already-summarized days. Returns a
+ * trend record (caller persists it). `range` is { kind, start, end }.
  */
-export async function summarizeDay(day, provider, which = 'unsummarized') {
-  const wanted = (s) => {
-    if (Array.isArray(which)) return which.includes(s.sessionId);
-    return !s.summary && s.kind === 'interactive';
+export async function summarizeTrend(days, provider, systemPrompt, range) {
+  const ordered = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  const { text, usage, provider: name, model } = await provider.complete({
+    system: systemPrompt || DEFAULT_TREND_SYSTEM,
+    prompt: promptForTrend(ordered),
+  });
+  const start = range?.start || ordered[0]?.date;
+  const end = range?.end || ordered[ordered.length - 1]?.date;
+  return {
+    id: range?.kind === 'week' ? `week:${start}` : `range:${start}:${end}`,
+    kind: range?.kind || 'range',
+    start,
+    end,
+    days: ordered.map((d) => d.date),
+    summary: (text || '').trim(),
+    generatedAt: new Date().toISOString(),
+    meta: { provider: name, model, usage },
   };
-  let count = 0;
-  for (const s of day.sessions) {
-    if (!wanted(s)) continue;
-    await summarizeSession(s, provider);
-    count++;
-  }
-  return { count };
 }

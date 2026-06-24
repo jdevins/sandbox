@@ -50,10 +50,22 @@ header.site .muted { color: var(--text-dim); font-size: 13px; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .card h2 { margin: 0 0 4px; font-size: 16px; }
-.card .desc { color: var(--text-dim); font-size: 13px; min-height: 32px; }
-.card .meta { color: var(--text-dim); font-size: 12px; font-family: var(--mono); margin-top: 8px; }
+.card .desc {
+  color: var(--text-dim); font-size: 13px; line-height: 1.55;
+  white-space: pre-wrap; margin: 6px 0 0; min-height: 32px;
+}
+.card .meta { color: var(--text-dim); font-size: 12px; font-family: var(--mono); margin-top: 10px; line-height: 1.5; }
+
+/* Standard: action buttons in a card anchor to the bottom, right-aligned —
+   margin-top:auto pins this row to the bottom of the flex column regardless of
+   how much content sits above it, so buttons line up across a grid of cards. */
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: auto; padding-top: 14px; }
 
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .spread { justify-content: space-between; }
@@ -91,3 +103,37 @@ header.site .muted { color: var(--text-dim); font-size: 13px; }
 
 code, pre { font-family: var(--mono); }
 .empty { color: var(--text-dim); padding: 40px; text-align: center; border: 1px dashed var(--border); border-radius: var(--radius); }
+
+/* Collapsible group — standard pattern for grouping any content behind a labeled header. */
+.collapsible { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+.collapsible > summary { cursor: pointer; list-style: none; user-select: none; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.collapsible > summary::-webkit-details-marker { display: none; }
+.collapsible > summary::after { content: '›'; margin-left: auto; font-size: 18px; color: var(--text-dim); display: inline-block; transition: transform .15s; line-height: 1; }
+.collapsible[open] > summary::after { transform: rotate(90deg); }
+.coll-count { font-weight: 400; color: var(--text-dim); }
+.coll-body { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+
+/* Edit-in-place — standard pattern (see ui-edit-in-place). The field itself is
+   the editor: looks like plain text at rest, gains a border/background on
+   hover/focus so it reads as editable without a separate read+edit toggle. */
+.inline-field {
+  display: block; width: 100%; min-width: 0; box-sizing: border-box;
+  background: transparent; color: var(--text); font: inherit;
+  border: 1px solid transparent; border-radius: 6px; padding: 4px 6px;
+  resize: vertical; overflow-wrap: anywhere;
+}
+.inline-field:hover { border-color: var(--border); }
+.inline-field:focus { outline: none; border-color: var(--accent); background: var(--bg-elev-2); }
+
+/* Ghost build stamp — fixed bottom-right on every page. Version + how long ago
+   the running code loaded, so you can tell at a glance if you're looking at your
+   latest change. Non-interactive (never blocks clicks). See src/lib/release.js. */
+.ghost-version {
+  position: fixed; right: 10px; bottom: 8px; z-index: 50;
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  opacity: .4; pointer-events: none; user-select: none;
+}
+.ghost-version .gv-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
+.ghost-version.fresh { opacity: .75; color: var(--ok); }
+.ghost-version.fresh .gv-dot { background: var(--ok); box-shadow: 0 0 5px var(--ok); }

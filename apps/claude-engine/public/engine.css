@@ -54,13 +54,54 @@ body { display: flex; min-height: 100vh; }
 .eng-table th, .eng-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .eng-table th { color: var(--text-dim); font-weight: 500; }
 
+/* Code/data blocks (raw JSON, transcripts) — these are code, so they scroll
+   horizontally rather than wrapping, which would mangle indentation and break
+   long tokens mid-word. Prose never uses this class; see .summary-text. */
 .eng-source, .eng-panel pre {
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px; overflow: auto; font-size: 12.5px; max-height: 460px; white-space: pre-wrap; word-break: break-word;
+  padding: 12px; overflow: auto; font-size: 12.5px; max-height: 460px; white-space: pre;
 }
 .eng-panel { background: var(--bg-elev); border: 1px solid var(--accent); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 22px; }
 .eng-panel h3 { margin: 0 0 10px; font-size: 15px; }
 .bad { color: var(--bad); }
 
+/* Prose summary text (LLM-generated daily/trend summaries). Always wraps within
+   its container — only code blocks (.eng-source above) get horizontal scroll. */
+.summary-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.summary-text.lg { font-size: 14px; line-height: 1.7; }
+
 .btn.danger { border-color: #5c2326; }
 .btn.danger:hover { border-color: var(--bad); }
+
+/* Header overflow menu — collapses several page-header actions behind a single
+   toggle. Built on <details>, same pattern as .collapsible, so no JS is needed. */
+.eng-menu { position: relative; }
+.eng-menu > summary { list-style: none; cursor: pointer; }
+.eng-menu > summary::-webkit-details-marker { display: none; }
+.eng-menu-body {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+  background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px; min-width: 200px; display: flex; flex-direction: column; gap: 6px;
+}
+.eng-menu-body form { display: flex; flex-direction: column; gap: 6px; }
+.eng-menu-body .btn, .eng-menu-body a.btn { width: 100%; text-align: left; justify-content: flex-start; }
+
+/* Inline background-job wait indicator — shown on the current page while a
+   summarize/trend job runs, instead of navigating to a separate status page.
+   Indeterminate (spinner), not a progress bar: each LLM step is one blocking
+   call of unknown duration, so a fill-percentage bar just looks stuck. */
+#job-progress {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--llm-dim); border-bottom: 1px solid var(--llm);
+  padding: 8px 18px; font-size: 13px;
+  transform: translateY(-100%); transition: transform .2s;
+}
+#job-progress.on { transform: translateY(0); }
+#job-progress .job-progress-label { white-space: nowrap; }
+#job-progress .job-progress-spinner {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--llm); border-top-color: transparent;
+  animation: job-progress-spin .7s linear infinite;
+}
+@keyframes job-progress-spin { to { transform: rotate(360deg); } }

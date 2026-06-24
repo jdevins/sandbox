@@ -1,6 +1,10 @@
 import express from 'express';
 import { getSchedules, getLog, getDrift, triggerNow, updateJob, addJob, deleteJob, readPrompt, writePrompt } from '../../src/scheduler.js';
 import cron from 'node-cron';
+import { ghostStamp } from '../../src/lib/release.js';
+
+// Module-load epoch — resets on process restart and on a dashboard Restart.
+const LOADED_AT = Date.now();
 
 export const meta = {
   name: 'Scheduler',
@@ -153,7 +157,7 @@ export function createApp({ name }) {
       </div>
 
       <p class="sub" style="margin-top:8px">Source: <code>data/schedules.json</code> · Prompts: <code>prompts/</code></p>
-    </div></body></html>`);
+    </div>${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}</body></html>`);
   });
 
   // ── Job detail / edit ─────────────────────────────────────────────────────
@@ -321,7 +325,7 @@ export function createApp({ name }) {
       advToggle.addEventListener('change', () => setAdv(advToggle.checked));
       setAdv(advToggle.checked);
     </script>
-    </div></body></html>`);
+    </div>${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}</body></html>`);
   });
 
   // ── Save settings ─────────────────────────────────────────────────────────

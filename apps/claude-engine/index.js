@@ -2,11 +2,13 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { codeStore, jsonStore } from './lib/store.js';
+import { jsonStore } from './lib/store.js';
+import { discoverOwners, multiStore } from './lib/registry.js';
 import { getProvider } from './lib/provider.js';
+import { usageLog } from './lib/usageLog.js';
 import { discoverFeatures } from './lib/features.js';
 import * as ui from './components/widgets.js';
-import { page } from './components/layout.js';
+import { page, markBuild } from './components/layout.js';
 import { overviewPage } from './pages/overview.js';
 import { memoriesRouter } from './pages/memories.js';
 
@@ -19,21 +21,31 @@ export const meta = {
 };
 
 export async function createApp({ name }) {
+  markBuild(meta); // refresh the build stamp's load epoch on every (re)load
   const router = express.Router();
   const dataDir = path.join(__dirname, 'data');
+  const appsDir = path.join(__dirname, '..');
+
+  const [skillOwners, agentOwners] = await Promise.all([
+    discoverOwners({ appsDir, engineOwner: name, engineDir: path.join(dataDir, 'skills'), kind: 'skills', suffix: '.skill.js' }),
+    discoverOwners({ appsDir, engineOwner: name, engineDir: path.join(dataDir, 'agents'), kind: 'agents', suffix: '.agent.js' }),
+  ]);
 
   // Engine context — explicit dependencies handed to every feature so
-  // capabilities stay modular, swappable, and uncommingled.
+  // capabilities stay modular, swappable, and uncommingled. skills/agents are
+  // multi-owner: the engine leases the right to craft them, each owning app
+  // keeps and runs its own copy.
   const ctx = {
     appName: name,
     base: `/apps/${name}`,
     paths: { app: __dirname, data: dataDir },
     stores: {
-      skills: codeStore({ dir: path.join(dataDir, 'skills'), suffix: '.skill.js' }),
-      agents: codeStore({ dir: path.join(dataDir, 'agents'), suffix: '.agent.js' }),
+      skills: multiStore(skillOwners),
+      agents: multiStore(agentOwners),
       memories: jsonStore({ dir: path.join(dataDir, 'memories') }),
     },
     provider: getProvider(),
+    usage: usageLog({ dataDir }),
     ui,
     page,
   };

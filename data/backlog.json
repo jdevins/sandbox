@@ -1,5 +1,18 @@
 [
   {
+    "estimate": null,
+    "approvedForBuild": false,
+    "claim": null,
+    "id": "mqsdppg5",
+    "title": "node --test stalled 30+min once (cause unconfirmed) — added safety timeout",
+    "description": "A single npm test run stalled 30+ minutes instead of exiting. Initial theory was the session-repack node-cron job (apps/claude-engine/features/session-repack/index.js) pinning the event loop open, but that is already guarded: each test file sets process.env.NODE_ENV = 'test' before importing the app, and a clean re-run after this incident passed all 11 tests in under 1s with no hang. So the guard works as designed and the stall is NOT reproduced -- likely a one-off (stale port/process from earlier manual node server.js runs in the same session, or an interrupted background task). Added a permanent safety net regardless: npm test now runs node --test --test-timeout=30000 (package.json) so any future hung test fails after 30s instead of stalling indefinitely. Note: --test-force-exit was tried first but causes a native libuv assertion crash on Node v23.8.0/Windows, so it was dropped -- do not re-add without confirming on a newer Node version first.",
+    "type": "bug",
+    "status": "ready-to-groom",
+    "addedBy": "claude",
+    "createdAt": "2026-06-24T18:00:38.165Z",
+    "annotations": []
+  },
+  {
     "estimate": "L",
     "approvedForBuild": false,
     "claim": null,
@@ -83,7 +96,7 @@
     "title": "Pixel Foundry — 3 new scenarios",
     "description": "Add three new scenario files to apps/claude-engine/features/foundry/scenarios/. The loader already auto-discovers any *.scenario.js dropped there.\n\n1. TRIAGE (tool-call showcase): a backlog queue arrives. Agents have tools: read_item, annotate, flag_blocker. Goal is to process the queue, each agent picking the right tool per item type. Teaches agents choosing which tool to call per decision, not just moving on a grid.\n\n2. DYNAMIC CREW (spawn on condition): start solo builder. If budget < 50% before 60% completion, foreman spawns a second fetcher mid-run. Spawn event visible in the step log. Teaches reactive agent addition — not a fixed roster.\n\n3. CONTESTED RESOURCES (conflict → orchestration): two builders target the same cells from opposite ends. No foreman. They collide, waste budget, fail. Replay adds foreman with assignment coordination. Teaches why orchestration exists by showing its absence first.\n\nEach scenario follows the existing contract: definition, economy, build(rng), configs (solo + crew variants).",
     "type": "feature",
-    "status": "pending",
+    "status": "on-hold",
     "addedBy": "jdevins",
     "createdAt": "2026-06-18T13:12:19.015Z",
     "annotations": []
@@ -96,9 +109,61 @@
     "title": "Session Repack — full-text JSONL search",
     "description": "Add a grep-style search bar to the Historical JSONL view (Option B) that searches across the raw content of every record, not just session titles. Returns a flat list of matching records with date/session as context on each row. Include/exclude filters remain as session-level coarse filters; this is finer-grained line-level search.",
     "type": "feature",
-    "status": "pending",
+    "status": "on-hold",
     "addedBy": "jdevins",
     "createdAt": "2026-06-19T00:00:00.000Z",
+    "annotations": []
+  },
+  {
+    "estimate": "L",
+    "approvedForBuild": false,
+    "claim": null,
+    "id": "mq6plw01",
+    "title": "App — Playwright Integration",
+    "description": "Integrate Playwright into Sandbox as a new app. Includes a test-suite authoring surface (create/edit suites in the UI). Suites must be runnable three ways: from the app UI, from the CLI, and from Claude Desktop. Define a shared suite format so all three invocation paths target the same suites.",
+    "type": "feature",
+    "status": "on-hold",
+    "addedBy": "jdevins",
+    "createdAt": "2026-06-22T00:00:00.000Z",
+    "annotations": []
+  },
+  {
+    "estimate": "L",
+    "approvedForBuild": false,
+    "claim": null,
+    "id": "mq6plw02",
+    "title": "App — Mermaid Diagrams",
+    "description": "Diagram creator app. Utility to create, save, and edit Mermaid syntax from either form data or a prompt. Supported types: sequence diagram, flow chart, swimlanes, pie chart, bar graph, plus others TBD. For well-known types the user does NOT supply raw Mermaid syntax — the form/prompt generates it. User may also paste raw Mermaid syntax directly when needed.",
+    "type": "feature",
+    "status": "on-hold",
+    "addedBy": "jdevins",
+    "createdAt": "2026-06-22T00:00:00.000Z",
+    "annotations": []
+  },
+  {
+    "estimate": "L",
+    "approvedForBuild": false,
+    "claim": null,
+    "id": "mq6plw03",
+    "title": "App — HTML Form Viewer",
+    "description": "A semi-WYSIWYG that hooks into an HTML document to convert it into a fillable form. User is shown a rendering of the HTML with edit anchors; clicking an anchor opens a section-specific form. As each section is edited and saved, the updated rendered HTML is displayed.",
+    "type": "feature",
+    "status": "on-hold",
+    "addedBy": "jdevins",
+    "createdAt": "2026-06-22T00:00:00.000Z",
+    "annotations": []
+  },
+  {
+    "estimate": "M",
+    "approvedForBuild": false,
+    "claim": null,
+    "id": "mq7textw",
+    "title": "Standard — textarea display (wrap, copy, pretty-print code)",
+    "description": "New UI standard for textarea/output display across apps: (1) text wraps instead of horizontal scroll, (2) a light copy-to-clipboard icon on each textarea, (3) detect when content is code and apply pretty-print/formatting where applicable. Should land in standards/index.js (ui category) plus a shared implementation apps can adopt.",
+    "type": "standard",
+    "status": "ready-to-groom",
+    "addedBy": "jdevins",
+    "createdAt": "2026-06-23T00:00:00.000Z",
     "annotations": []
   }
 ]

@@ -14,7 +14,7 @@ export const card = ({ title, badge, desc, meta, actions }) => html`
     <div class="row spread"><h2>${title}</h2>${badge || ''}</div>
     ${desc ? html`<div class="desc">${desc}</div>` : ''}
     ${meta ? html`<div class="meta">${meta}</div>` : ''}
-    ${actions ? html`<div class="row" style="margin-top:14px">${actions}</div>` : ''}
+    ${actions ? html`<div class="card-actions">${actions}</div>` : ''}
   </div>`;
 
 export const grid = (cards) => html`<div class="grid">${cards}</div>`;
@@ -23,11 +23,23 @@ export const empty = (msg) => html`<div class="empty">${msg}</div>`;
 
 export const badge = (text, kind = '') => html`<span class="badge ${kind}">${text}</span>`;
 
-export const btn = ({ href, label, action, name, primary, danger, llm, method }) => {
+// `status` (a JSON status endpoint URL) marks the button as a background job
+// trigger — the client polls it for progress inline instead of navigating to
+// a status page. Used for llm actions like summarize/trend.
+export const btn = ({ href, label, action, name, primary, danger, llm, method, title, status }) => {
   const cls = ['btn', primary ? 'primary' : '', danger ? 'danger' : '', llm ? 'llm' : ''].filter(Boolean).join(' ');
-  if (href) return html`<a class="${cls}" href="${href}">${label}</a>`;
-  return html`<button class="${cls}" data-action="${action || ''}" data-name="${name || ''}" data-method="${method || 'POST'}">${label}</button>`;
+  if (href) return html`<a class="${cls}" title="${title || ''}" href="${href}">${label}</a>`;
+  return html`<button class="${cls}" title="${title || ''}" data-action="${action || ''}" data-name="${name || ''}" data-method="${method || 'POST'}" data-llm-status="${status || ''}">${label}</button>`;
 };
+
+// Overflow action menu for page headers — collapses several actions behind a
+// single "⋯" toggle so headers stay scannable. Built on <details>, matching the
+// .collapsible pattern, so it needs no custom JS.
+export const menu = (items, { label = '⋯' } = {}) => html`
+  <details class="eng-menu">
+    <summary class="btn" title="Actions">${label}</summary>
+    <div class="eng-menu-body">${items}</div>
+  </details>`;
 
 export const table = (headers, rows) => html`
   <table class="eng-table">

@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test",
+    "test": "node --test --test-timeout=30000",
     "setup:hooks": "git config core.hooksPath .hooks",
     "markitdown:setup": "node apps/markitdown/lib/setup.js",
     "markitdown:build": "node apps/markitdown/lib/build.js"

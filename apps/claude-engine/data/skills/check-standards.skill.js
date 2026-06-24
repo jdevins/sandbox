@@ -68,20 +68,62 @@ export async function run(input, _ctx) {
   }
 }
 
+// The evaluation runner checks `deepEqual(got, expect)` against the full
+// return value (see skill-builder/index.js) — no predicate functions. Each
+// test below pins category/appName combinations whose checklist composition
+// is currently stable; a rule renamed or re-leveled in standards/index.js
+// will need these literals updated too.
 export const tests = [
   {
-    name: 'returns rules across all categories when no filter',
-    input: {},
-    expect: r => r.errors.length > 0 && r.warnings.length > 0,
-  },
-  {
-    name: 'filters by category — security rules only',
+    name: 'filters by category — security',
     input: { category: 'security' },
-    expect: r => [...r.errors, ...r.warnings].every(rule => rule.id.startsWith('security-')),
+    expect: {
+      summary: '2 required · 1 advisory · 0 overridden',
+      errors: [
+        { id: 'security-no-hardcoded-secrets', level: 'error', description: 'Secrets (API keys, tokens, passwords) are read from environment variables, never hardcoded in source files.', overridden: false, overrideReason: null },
+        { id: 'security-llm-provider-only', level: 'error', description: 'LLM calls go through the provider interface (ctx.provider.complete(...)). Never call the Anthropic SDK or any LLM directly from app code. This enforces a single point of control for auth, logging, and future cost tracking.', overridden: false, overrideReason: null },
+      ],
+      warnings: [
+        { id: 'security-validate-external-input', level: 'warning', description: 'Validate and sanitize input at system boundaries: user-submitted form data, external API responses. Trust internal module interfaces without defensive checks.', overridden: false, overrideReason: null },
+      ],
+      skipped: [],
+      appName: null,
+      category: 'security',
+    },
   },
   {
-    name: 'summary string is present',
-    input: { category: 'ui' },
-    expect: r => typeof r.summary === 'string' && r.summary.includes('·'),
+    name: 'filters by category — process',
+    input: { category: 'process' },
+    expect: {
+      summary: '2 required · 2 advisory · 0 overridden',
+      errors: [
+        { id: 'process-version-required', level: 'error', description: 'Every app exports a version field in meta (e.g. version: "1.0.0"). Missing version is a contract violation.', overridden: false, overrideReason: null },
+        { id: 'process-test-server-cleanup', level: 'error', description: 'Any test that opens a server with app.listen() must close it in a try/finally (or t.after hook), not as the last line of the test body. A thrown assertion before close() leaves the listener open, which keeps the node:test child process alive indefinitely and stalls every subsequent test file. Found when a route change broke test/engine.test.js and the dangling server hung npm test for the rest of the session.', overridden: false, overrideReason: null },
+      ],
+      warnings: [
+        { id: 'process-version-on-commit', level: 'warning', description: 'Every commit that changes an app increments its patch version in meta. Exceptions: documentation-only changes, standards updates, dependency bumps with no behavior change.', overridden: false, overrideReason: null },
+        { id: 'process-test-pattern', level: 'warning', description: 'Tests use node:test and boot the server via createServer() with app.listen(0) (ephemeral port). Do not bind to a fixed port in tests.', overridden: false, overrideReason: null },
+      ],
+      skipped: [],
+      appName: null,
+      category: 'process',
+    },
+  },
+  {
+    name: 'appName passes through with no matching overrides',
+    input: { category: 'security', appName: 'nonexistent-app' },
+    expect: {
+      summary: '2 required · 1 advisory · 0 overridden',
+      errors: [
+        { id: 'security-no-hardcoded-secrets', level: 'error', description: 'Secrets (API keys, tokens, passwords) are read from environment variables, never hardcoded in source files.', overridden: false, overrideReason: null },
+        { id: 'security-llm-provider-only', level: 'error', description: 'LLM calls go through the provider interface (ctx.provider.complete(...)). Never call the Anthropic SDK or any LLM directly from app code. This enforces a single point of control for auth, logging, and future cost tracking.', overridden: false, overrideReason: null },
+      ],
+      warnings: [
+        { id: 'security-validate-external-input', level: 'warning', description: 'Validate and sanitize input at system boundaries: user-submitted form data, external API responses. Trust internal module interfaces without defensive checks.', overridden: false, overrideReason: null },
+      ],
+      skipped: [],
+      appName: 'nonexistent-app',
+      category: 'security',
+    },
   },
 ]

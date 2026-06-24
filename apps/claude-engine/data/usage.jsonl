@@ -1,0 +1,10 @@
+{"ts":"2026-06-24T17:56:04.957Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":1}
+{"ts":"2026-06-24T17:56:04.960Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-24T17:56:04.965Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":3}
+{"ts":"2026-06-24T17:56:05.018Z","kind":"llm","id":"mock","calledBy":{"kind":"agent","id":"summarizer","owner":"claude-engine"},"ok":true,"ms":0}
+{"ts":"2026-06-24T17:56:05.020Z","kind":"agent","id":"summarizer","owner":"claude-engine","ok":true,"ms":2}
+{"ts":"2026-06-24T17:56:56.812Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-24T17:56:56.820Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-24T17:56:56.824Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":1}
+{"ts":"2026-06-24T17:56:56.864Z","kind":"llm","id":"mock","calledBy":{"kind":"agent","id":"summarizer","owner":"claude-engine"},"ok":true,"ms":0}
+{"ts":"2026-06-24T17:56:56.867Z","kind":"agent","id":"summarizer","owner":"claude-engine","ok":true,"ms":3}

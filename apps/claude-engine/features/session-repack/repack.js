@@ -23,7 +23,16 @@ export function projectsDir(env = process.env) {
   return env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
 
-const dayOf = (ts) => (ts || '').slice(0, 10);
+// Local-calendar-day date string (YYYY-MM-DD) — NOT UTC. Sessions and the
+// daily cron are scoped to the user's actual workday; slicing the UTC
+// timestamp directly rolls the date over mid-evening for timezones west of
+// UTC (e.g. US Eastern rolls at 8pm local), splitting one workday in two.
+export const localDate = (d = new Date()) => {
+  const shifted = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return shifted.toISOString().slice(0, 10);
+};
+
+const dayOf = (ts) => (ts ? localDate(new Date(ts)) : '');
 
 // Normalize a message's content into an array of blocks.
 function blocks(message) {
@@ -93,7 +102,7 @@ export async function scanGrouped({ type = 'all', afterDate = null, env = proces
       if (afterDate) {
         try {
           const { mtime } = await fs.stat(path.join(dir, name));
-          if (mtime.toISOString().slice(0, 10) < afterDate) continue;
+          if (localDate(mtime) < afterDate) continue;
         } catch {
           /* if stat fails, read it anyway */
         }
@@ -102,8 +111,8 @@ export async function scanGrouped({ type = 'all', afterDate = null, env = proces
       if (!raw) continue;
       const sid = name.replace(/\.jsonl$/, '');
       const stamps = raw.map((r) => r.timestamp).filter(Boolean).sort();
-      const firstDate = stamps[0]?.slice(0, 10) || 'unknown';
-      const lastDate = stamps[stamps.length - 1]?.slice(0, 10) || firstDate;
+      const firstDate = stamps[0] ? localDate(new Date(stamps[0])) : 'unknown';
+      const lastDate = stamps[stamps.length - 1] ? localDate(new Date(stamps[stamps.length - 1])) : firstDate;
       const aiTitle = raw.find((r) => r.type === 'ai-title')?.aiTitle;
       const cwd = raw.find((r) => r.cwd)?.cwd || folder;
       for (const r of raw) counts[r.type] = (counts[r.type] || 0) + 1;
@@ -151,7 +160,7 @@ export async function findAllDates(env = process.env) {
     for (const name of files) {
       try {
         const { mtime } = await fs.stat(path.join(dir, name));
-        dateSet.add(mtime.toISOString().slice(0, 10));
+        dateSet.add(localDate(mtime));
       } catch { /* skip */ }
     }
   }
@@ -289,25 +298,28 @@ export async function scanDay(date, env = process.env) {
 }
 
 /**
- * Build a full day record. Merges any existing per-session summaries (matched by
- * sessionId) so re-running Stage 1 never discards Stage 2 work.
+ * Build a full day record. Carries forward the day-level summary (and legacy
+ * report) from any existing record so re-running Stage 1 never discards the
+ * opt-in Stage 2 work.
  */
 export async function buildDayRepack(date, { previous } = {}, env = process.env) {
   const sessions = await scanDay(date, env);
-  if (previous?.sessions?.length) {
-    const prior = new Map(previous.sessions.map((s) => [s.sessionId, s]));
-    for (const s of sessions) {
-      const old = prior.get(s.sessionId);
-      if (old?.summary) {
-        s.summary = old.summary;
-        s.summarizedAt = old.summarizedAt;
-      }
-    }
-  }
   const counts = sessions.reduce((acc, s) => ((acc[s.kind] = (acc[s.kind] || 0) + 1), acc), {});
   const tokens = sessions.reduce(
     (acc, s) => ({ in: acc.in + s.tokens.in, out: acc.out + s.tokens.out, cache: acc.cache + s.tokens.cache }),
     { in: 0, out: 0, cache: 0 },
   );
-  return { id: date, date, generatedAt: new Date().toISOString(), counts, tokens, sessions };
+  const day = { id: date, date, generatedAt: new Date().toISOString(), counts, tokens, sessions };
+  // Preserve a previously-generated day summary (new field, or legacy report).
+  if (previous?.summary) {
+    day.summary = previous.summary;
+    day.summaryAt = previous.summaryAt;
+    day.summaryMeta = previous.summaryMeta;
+  } else if (previous?.report) {
+    // Legacy: fold an old executive report forward as the day summary.
+    day.summary = previous.report;
+    day.summaryAt = previous.reportAt;
+    day.summaryMeta = previous.reportMeta;
+  }
+  return day;
 }

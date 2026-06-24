@@ -183,12 +183,44 @@ const ui = [
     description: 'Any button that triggers an active LLM session must have an icon and use the .btn-llm class for consistent coloring. Users must always identify LLM-backed actions at a glance.',
   },
   {
+    id: 'ui-collapsible-group',
+    category: 'ui',
+    level: 'warning',
+    status: 'active',
+    origin: 'design',
+    description: 'Collapsible content groups use <details class="collapsible"> with a <summary> containing a label and optional .coll-count span. Body content goes in .coll-body. The chevron and open/close animation are handled by CSS — no custom JS or inline styles needed.',
+  },
+  {
+    id: 'ui-no-smart-quote-attrs',
+    category: 'ui',
+    level: 'error',
+    status: 'active',
+    origin: 'bugfix',
+    description: 'Never use smart/curly quotes (“ ” ‘ ’) as HTML attribute or tag delimiters in `html` template code. A smart quote in place of a straight " or \' as the opening delimiter (for example, writing the class attribute as class followed by a curly quote instead of a straight one) is read literally, so the class never matches and all CSS silently fails. Smart quotes in display TEXT are fine — only delimiter positions are forbidden. Enforced by .hooks/check-smart-quotes.js.',
+  },
+  {
+    id: 'ui-edit-in-place',
+    category: 'ui',
+    level: 'warning',
+    status: 'active',
+    origin: 'design',
+    description: 'Editable fields (title, description, etc.) render as the editor itself (.inline-field input/textarea), not a read-only display plus a separate duplicate edit form. Submit on change/blur. Do not build a second "edit" affordance for a field that is already shown.',
+  },
+  {
     id: 'ui-llm-active-state',
     category: 'ui',
     level: 'warning',
     status: 'active',
     origin: 'design',
     description: 'While an LLM session is in flight, the triggering button shows a loading state (disabled + spinner or label change). No silent waits.',
+  },
+  {
+    id: 'ui-text-wraps-code-scrolls',
+    category: 'ui',
+    level: 'warning',
+    status: 'proposed',
+    origin: 'rework',
+    description: 'Prose text (descriptions, summaries, prompt fields) always wraps within its container — use .summary-text for LLM summary blocks, plain textarea (type "text") for prose entry fields. Only literal code/data blocks (raw JSON, transcripts) may overflow horizontally to scroll — use .eng-source or textarea.code. Found while cleaning up session-repack cards, which had ad-hoc inline white-space styles and a prose prompt field mistakenly typed as code (forced no-wrap + horizontal scroll).',
   },
 ]
 
@@ -219,6 +251,14 @@ const process = [
     status: 'active',
     origin: 'design',
     description: 'Tests use node:test and boot the server via createServer() with app.listen(0) (ephemeral port). Do not bind to a fixed port in tests.',
+  },
+  {
+    id: 'process-test-server-cleanup',
+    category: 'process',
+    level: 'error',
+    status: 'active',
+    origin: 'bugfix',
+    description: 'Any test that opens a server with app.listen() must close it in a try/finally (or t.after hook), not as the last line of the test body. A thrown assertion before close() leaves the listener open, which keeps the node:test child process alive indefinitely and stalls every subsequent test file. Found when a route change broke test/engine.test.js and the dangling server hung npm test for the rest of the session.',
   },
 ]
 

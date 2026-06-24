@@ -2,21 +2,42 @@ import express from 'express';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../../src/app.js';
+import { ghostStamp } from '../../src/lib/release.js';
+
+// Module-load epoch — resets on process restart and on a dashboard Restart
+// (both re-import this file). Drives the bottom-right freshness stamp.
+const LOADED_AT = Date.now();
 
 export const meta = {
   name: 'Backlog',
   description: 'Shared backlog. Items are stored in data/backlog.json.',
-  version: '2.1.0',
+  version: '2.2.0',
 };
 
 const FILE = path.join(ROOT, 'data', 'backlog.json');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// Pipeline statuses:
-//   ready-to-groom  → groomed (agent annotated) → ready (human approved)
-//                   → in-progress (builder claimed) → done | blocked
-//   groomer-blocked → stays until human edits description, which resets to ready-to-groom
-const STATUSES = ['ready-to-groom', 'groomer-blocked', 'pending', 'groomed', 'ready', 'in-progress', 'done', 'blocked'];
+// Pipeline statuses — this is the full state machine; agents managing backlog
+// state must treat this list (and STATUS_DEFINITIONS below) as authoritative.
+//   ready-to-groom → groomed (agent annotated) → ready (human approved)
+//                  → in-progress (builder claimed) → done | blocked
+//   on-hold        → paused by a human; not actively worked until moved out
+//   blocked        → stuck (agent couldn't correlate it, or build failed) —
+//                    editing the description resets it to ready-to-groom
+const STATUSES = ['ready-to-groom', 'on-hold', 'groomed', 'ready', 'in-progress', 'done', 'blocked'];
+
+// Authoritative status definitions, served to agents via GET /api/status-definitions
+// so any agent managing backlog state (groomer, builder, summarizer) has a single
+// source of truth instead of inferring meaning from the string.
+const STATUS_DEFINITIONS = {
+  'ready-to-groom': 'New item awaiting agent triage/annotation.',
+  groomed: 'An agent has annotated the item with enough detail to evaluate.',
+  ready: 'Human has approved the item for build.',
+  'in-progress': 'A builder agent has claimed the item and is working it.',
+  done: 'Work is complete.',
+  blocked: "Stuck — either an agent couldn't correlate it to known work, or a build attempt failed. Editing the description resets it to ready-to-groom.",
+  'on-hold': 'Paused by a human; intentionally not in the active pipeline.',
+};
 
 function normalize(i) {
   return {
@@ -24,8 +45,8 @@ function normalize(i) {
     approvedForBuild: false,
     claim: null,
     ...i,
-    // Legacy items with status 'pending' are treated as ready-to-groom
-    status: i.status === 'pending' ? 'ready-to-groom' : (i.status || 'ready-to-groom'),
+    // Legacy statuses from before the status set was reduced
+    status: i.status === 'pending' ? 'on-hold' : i.status === 'groomer-blocked' ? 'blocked' : (i.status || 'ready-to-groom'),
     annotations: Array.isArray(i.annotations) ? i.annotations : [],
   };
 }
@@ -44,29 +65,28 @@ function write(items) {
 
 const STATUS_COLORS = {
   'ready-to-groom': '#2e7d4f',
-  'groomer-blocked': '#8b4513',
-  pending: '#888',
+  'on-hold': '#888',
   groomed: '#3a6ea5',
   ready: 'var(--accent, #7c6af7)',
   'in-progress': 'var(--yellow, #ff9800)',
   done: 'var(--green, #4caf50)',
-  blocked: 'var(--red, #f44336)',
+  blocked: '#8b4513',
 };
 
 function statusBadge(s) {
   return `<span class="badge" style="background:${STATUS_COLORS[s] || '#888'}">${esc(s)}</span>`;
 }
 
-function annotationsBlock(item) {
+function annotationsSection(item) {
   if (!item.annotations.length) return '';
   const rows = item.annotations
-    .map((a) => `<div style="font-size:0.8em;border-left:2px solid var(--border,#333);padding-left:8px;margin:3px 0">
-        <span class="badge" style="background:#555">${esc(a.agent)} · ${esc(a.kind)}</span>
-        ${esc(a.body)}</div>`)
+    .map((a) => `<div style="font-size:0.85em;border-left:2px solid var(--border);padding-left:8px;margin:6px 0;overflow-wrap:anywhere">
+        <span class="badge">${esc(a.agent)} · ${esc(a.kind)}</span>
+        <div style="margin-top:2px">${esc(a.body)}</div></div>`)
     .join('');
-  return `<details style="margin-top:4px">
-      <summary style="cursor:pointer;color:var(--muted);font-size:0.8em">${item.annotations.length} annotation(s)</summary>
-      <div style="margin-top:4px">${rows}</div>
+  return `<details class="collapsible" style="margin-top:10px;padding:10px 14px">
+      <summary>Annotations <span class="coll-count">${item.annotations.length}</span></summary>
+      <div class="coll-body">${rows}</div>
     </details>`;
 }
 
@@ -88,21 +108,24 @@ function gateCell(item, name) {
   return control + claimLine;
 }
 
-function editForm(item, name) {
-  const isReadyToGroom = item.status === 'ready-to-groom';
-  return `<details style="margin-top:6px">
-    <summary style="cursor:pointer;color:var(--muted);font-size:0.75em">edit</summary>
-    <form method="post" action="/apps/${name}/edit" style="margin-top:6px;display:flex;flex-direction:column;gap:6px">
-      <input type="hidden" name="id" value="${esc(item.id)}">
-      <input class="btn" name="title" value="${esc(item.title)}" placeholder="Title" style="font-size:0.85em">
-      <textarea class="btn" name="description" rows="3" placeholder="Description" style="font-size:0.85em;resize:vertical">${esc(item.description || '')}</textarea>
-      <label style="font-size:0.8em;display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" name="readyToGroom" value="1"${isReadyToGroom ? ' checked' : ''}>
-        ready to groom
-      </label>
-      <button class="btn primary" type="submit" style="padding:2px 10px;font-size:0.8em;align-self:flex-start">Save</button>
-    </form>
-  </details>`;
+// Edit-in-place: the title/description fields ARE the editor — no separate
+// read-only display plus a duplicate edit form. Submits on blur if changed.
+const AUTOSUBMIT = `onblur="if(this.value!==this.defaultValue)this.form.requestSubmit()"`;
+
+function entryHeader(item, name) {
+  return `<form method="post" action="/apps/${name}/edit" style="flex:1;min-width:200px">
+    <input type="hidden" name="id" value="${esc(item.id)}">
+    <input class="inline-field" name="title" value="${esc(item.title)}" placeholder="Title"
+      style="font-weight:600;font-size:1em" ${AUTOSUBMIT}>
+  </form>`;
+}
+
+function descriptionSection(item, name) {
+  return `<form method="post" action="/apps/${name}/edit" style="margin-top:8px">
+    <input type="hidden" name="id" value="${esc(item.id)}">
+    <textarea class="inline-field" name="description" rows="2" placeholder="Add a description…"
+      style="font-size:0.9em;color:var(--muted)" ${AUTOSUBMIT}>${esc(item.description || '')}</textarea>
+  </form>`;
 }
 
 export function createApp({ name }) {
@@ -118,43 +141,42 @@ export function createApp({ name }) {
       `<a href="?status=${s}" class="btn${filter === s ? ' primary' : ''}" style="padding:3px 10px;font-size:0.8em">${s}</a>`
     ).join(' ');
 
-    const rows = visible.map((item) => `
-      <tr>
-        <td style="color:var(--muted);font-size:0.8em">${esc(item.id)}</td>
-        <td>
-          <strong>${esc(item.title)}</strong>
-          ${item.description ? `<br><span style="color:var(--muted);font-size:0.85em">${esc(item.description)}</span>` : ''}
-          ${editForm(item, name)}
-        </td>
-        <td>${esc(item.type || '—')}</td>
-        <td>${statusBadge(item.status)}</td>
-        <td style="font-size:0.8em;color:var(--muted)">${esc(item.estimate || '—')}</td>
-        <td style="font-size:0.8em">${gateCell(item, name)}</td>
-        <td style="font-size:0.8em;color:var(--muted)">${esc(item.addedBy || '—')}</td>
-        <td style="font-size:0.8em;color:var(--muted)">${item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—'}</td>
-        <td>
-          <form method="post" action="/apps/${name}/status" style="display:flex;gap:4px;align-items:center">
+    const entries = visible.map((item) => `
+      <div class="card backlog-item" style="margin-bottom:12px">
+        <div class="row spread" style="align-items:flex-start;flex-wrap:wrap;gap:10px">
+          ${entryHeader(item, name)}
+          <div class="row" style="gap:6px;flex-wrap:wrap">
+            ${statusBadge(item.status)}
+            <span class="badge">${esc(item.type || '—')}</span>
+          </div>
+        </div>
+
+        ${descriptionSection(item, name)}
+
+        <div class="row" style="font-size:0.78em;color:var(--muted);margin-top:8px;gap:14px;flex-wrap:wrap">
+          <span>#${esc(item.id)}</span>
+          <span>est ${esc(item.estimate || '—')}</span>
+          <span>by ${esc(item.addedBy || '—')}</span>
+          <span>added ${item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—'}</span>
+        </div>
+
+        ${annotationsSection(item)}
+
+        <div class="row spread" style="margin-top:12px;flex-wrap:wrap;gap:10px;align-items:center">
+          <div style="font-size:0.85em">${gateCell(item, name)}</div>
+          <form method="post" action="/apps/${name}/status" class="row" style="gap:4px">
             <input type="hidden" name="id" value="${esc(item.id)}">
             <select name="status" class="btn" style="padding:2px 6px;font-size:0.8em">
               ${STATUSES.map((s) => `<option${item.status === s ? ' selected' : ''}>${s}</option>`).join('')}
             </select>
             <button class="btn" style="padding:2px 8px;font-size:0.8em">Set</button>
           </form>
-        </td>
-      </tr>
-      ${item.annotations.length ? `<tr>
-        <td></td>
-        <td colspan="8" style="padding-top:0;padding-bottom:10px">${annotationsBlock(item)}</td>
-      </tr>` : ''}`).join('');
+        </div>
+      </div>`).join('');
 
     res.type('html').send(`<!doctype html><html data-theme="dark"><head>
       <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>Backlog</title><link rel="stylesheet" href="/static/css/dark.css">
-      <style>
-        table { width:100%; border-collapse:collapse; }
-        th, td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--border,#333); vertical-align:top; }
-        th { color:var(--muted); font-weight:normal; font-size:0.85em; }
-      </style>
     </head><body><div class="wrap">
       <header class="site"><h1>📋 Backlog</h1><a class="muted" href="/">← Dashboard</a></header>
 
@@ -177,19 +199,15 @@ export function createApp({ name }) {
 
       <div class="row" style="margin-bottom:12px;gap:6px;flex-wrap:wrap">${filterLinks}</div>
 
-      <div class="card">
-        ${visible.length === 0
-          ? '<div class="empty">No items.</div>'
-          : `<table><thead><tr>
-              <th>ID</th><th>Item</th><th>Type</th><th>Status</th><th>Estimate</th><th>Build gate</th><th>By</th><th>Added</th><th></th>
-             </tr></thead><tbody>${rows}</tbody></table>`}
-      </div>
+      ${visible.length === 0 ? '<div class="empty">No items.</div>' : entries}
 
       <p class="muted" style="font-size:0.78em;margin-top:10px">
         Pipeline: <strong>ready-to-groom</strong> → groomed (agent) → <strong>ready</strong> (you approve) → in-progress (builder claims) → done.
-        <strong>groomer-blocked</strong>: agent couldn't correlate the item — edit description to reset to ready-to-groom.
+        <strong>blocked</strong>: stuck — agent couldn't correlate it, or a build attempt failed. Editing the description resets it to ready-to-groom.
+        <strong>on-hold</strong>: paused by a human, outside the active pipeline.
+        Full definitions: <a href="/apps/${name}/api/status-definitions">/api/status-definitions</a>.
       </p>
-    </div></body></html>`);
+    </div>${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}</body></html>`);
   });
 
   router.post('/add', (req, res) => {
@@ -210,19 +228,18 @@ export function createApp({ name }) {
     res.redirect(`/apps/${name}/`);
   });
 
-  // Edit title/description. Saving description clears groomer-blocked → ready-to-groom.
+  // Edit-in-place: title and description each submit independently (one field
+  // changed on blur), so only touch the field that was actually sent.
+  // Editing the description clears a blocked status back to ready-to-groom.
   router.post('/edit', (req, res) => {
-    const { id, title, description, readyToGroom } = req.body || {};
+    const { id, title, description } = req.body || {};
     const items = read();
     const item = items.find((i) => i.id === id);
     if (item) {
-      if (title) item.title = String(title).slice(0, 120);
-      item.description = description ? String(description).slice(0, 500) : '';
-      // Toggle: if checkbox checked → ready-to-groom; unchecked → leave status alone unless blocked
-      if (readyToGroom === '1') {
-        item.status = 'ready-to-groom';
-      } else if (item.status === 'ready-to-groom') {
-        item.status = 'groomed'; // uncheck on a ready-to-groom item marks it as already groomed
+      if (title !== undefined) item.title = String(title).slice(0, 120);
+      if (description !== undefined) {
+        item.description = String(description).slice(0, 500);
+        if (item.status === 'blocked') item.status = 'ready-to-groom';
       }
     }
     write(items);
@@ -260,6 +277,10 @@ export function createApp({ name }) {
   // ── Agent API ──────────────────────────────────────────────────────────────
   router.get('/api/items', (req, res) => res.json(read()));
 
+  // Authoritative status meanings — agents managing backlog state should read
+  // this instead of inferring meaning from the status string.
+  router.get('/api/status-definitions', (req, res) => res.json({ statuses: STATUSES, definitions: STATUS_DEFINITIONS }));
+
   // ANNOTATOR role (Groomer): append-only feedback. Advances ready-to-groom → groomed.
   router.post('/api/items/:id/annotate', (req, res) => {
     const { agent, kind, body, estimate } = req.body || {};
@@ -278,13 +299,13 @@ export function createApp({ name }) {
     res.json(item);
   });
 
-  // GROOMER role: set groomer-blocked when the item can't be correlated.
+  // GROOMER role: set blocked when the item can't be correlated.
   router.post('/api/items/:id/groom-block', (req, res) => {
     const { agent, reason } = req.body || {};
     const items = read();
     const item = items.find((i) => i.id === req.params.id);
     if (!item) return res.status(404).json({ error: 'Not found' });
-    item.status = 'groomer-blocked';
+    item.status = 'blocked';
     item.annotations.push({
       agent: agent || 'groomer',
       kind: 'blocked',
@@ -334,7 +355,7 @@ export function createApp({ name }) {
 export function health() {
   const items = read();
   const readyToGroom = items.filter((i) => i.status === 'ready-to-groom').length;
-  const blocked = items.filter((i) => i.status === 'groomer-blocked').length;
+  const blocked = items.filter((i) => i.status === 'blocked').length;
   const ready = items.filter((i) => i.status === 'ready' && i.approvedForBuild).length;
-  return { ok: true, detail: `${items.length} items · ${readyToGroom} ready-to-groom · ${blocked} groomer-blocked · ${ready} ready to build` };
+  return { ok: true, detail: `${items.length} items · ${readyToGroom} ready-to-groom · ${blocked} blocked · ${ready} ready to build` };
 }

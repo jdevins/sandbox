@@ -11,7 +11,7 @@ export const meta = {
 };
 
 export function createFeature(ctx) {
-  const { ui, page, stores, provider, base } = ctx;
+  const { ui, page, stores, provider, base, usage } = ctx;
   const store = stores.agents;
   const skillStore = stores.skills;
   const router = express.Router();
@@ -20,17 +20,24 @@ export function createFeature(ctx) {
   const shell = (title, body, breadcrumb = crumb) =>
     page({ title, active: 'agent-composer', breadcrumb, body });
 
-  // Execution context handed to an agent module at run time.
-  const execCtx = {
-    provider,
-    skills: {
-      run: async (id, input) => {
-        const { module } = await skillStore.get(id);
-        if (typeof module.run !== 'function') throw new Error(`skill "${id}" has no run()`);
-        return module.run(input, { provider });
+  // Execution context handed to an agent module at run time. Skill refs are
+  // "owner/id" so a composed agent can pull skills leased from any app.
+  // `calledBy` on the inner skill.run is what correlates a workflow: it logs
+  // not just "skill X ran" but "skill X ran because agent Y composed it."
+  function makeExecCtx(agentTag) {
+    return {
+      provider: usage.withCaller(provider, agentTag),
+      skills: {
+        run: async (ref, input) => {
+          const [owner, id] = String(ref).split('/');
+          const { module } = await skillStore.get(owner, id);
+          if (typeof module.run !== 'function') throw new Error(`skill "${ref}" has no run()`);
+          const taggedProvider = usage.withCaller(provider, { kind: 'skill', id, owner, calledBy: agentTag });
+          return usage.track('skill', { id, owner, calledBy: agentTag })(() => module.run(input, { provider: taggedProvider }));
+        },
       },
-    },
-  };
+    };
+  }
 
   // Library
   router.get('/', async (req, res) => {
@@ -38,12 +45,12 @@ export function createFeature(ctx) {
     const cards = agents.map((a) =>
       ui.card({
         title: a.name || a.id,
-        badge: a.broken ? ui.badge('broken', 'errored') : ui.badge(a.model || 'model'),
+        badge: html`${ui.badge(a.owner)}${a.broken ? ui.badge('broken', 'errored') : ui.badge(a.model || 'model')}`,
         desc: a.broken ? a.error : a.description,
         meta: html`${(a.skills || []).length} skill(s)`,
         actions: [
-          ui.btn({ href: `${base}/${a.id}`, label: 'Open', primary: true }),
-          ui.btn({ action: 'delete', name: `${base}/${a.id}/delete`, label: 'Delete', danger: true }),
+          ui.btn({ href: `${base}/${a.owner}/${a.id}`, label: 'Open', primary: true }),
+          ui.btn({ action: 'delete', name: `${base}/${a.owner}/${a.id}/delete`, label: 'Delete', danger: true }),
         ],
       }),
     );
@@ -57,12 +64,12 @@ export function createFeature(ctx) {
     res.send(shell('Agents', body));
   });
 
-  // Wizard — skills offered as checkboxes from the skills library.
+  // Wizard — skills offered as checkboxes from the skills library, across owners.
   router.get('/new', async (req, res) => {
     const skills = await skillStore.list();
     const skillPicker = skills.length
       ? html`<div class="eng-field"><label>Skills to compose</label>
-          ${skills.map((s) => html`<label class="eng-check"><input type="checkbox" name="skills" value="${s.id}"/> ${s.name || s.id}</label>`)}
+          ${skills.map((s) => html`<label class="eng-check"><input type="checkbox" name="skills" value="${s.owner}/${s.id}"/> ${ui.badge(s.owner)} ${s.name || s.id}</label>`)}
           <small class="dim">Each selected skill runs on the task before the LLM call.</small></div>`
       : html`<div class="eng-field"><small class="dim">No skills available yet — build some in the Skill Builder.</small></div>`;
 
@@ -71,6 +78,7 @@ export function createFeature(ctx) {
       submit: 'Create agent',
       fields: [
         { name: 'name', label: 'Name', required: true, placeholder: 'Summarizer' },
+        { name: 'owner', label: 'Owner app', type: 'select', options: store.owners, value: 'claude-engine', help: 'Which app crafts/runs this agent.' },
         { name: 'description', label: 'Description', type: 'text', rows: 2 },
         {
           name: 'model',
@@ -149,38 +157,40 @@ export function createFeature(ctx) {
   router.post('/', async (req, res) => {
     const b = req.body || {};
     const id = slug(b.name);
+    const owner = store.owners.includes(b.owner) ? b.owner : 'claude-engine';
     if (!id) return res.redirect(`${base}/new`);
     const skills = Array.isArray(b.skills) ? b.skills : b.skills ? [b.skills] : [];
     const source = agentModuleSource({
       id, name: b.name, description: b.description,
       model: b.model, systemPrompt: b.systemPrompt, skills, taskLabel: b.taskLabel,
     });
-    await store.save(id, source);
-    res.redirect(`${base}/${id}`);
+    await store.save(owner, id, source);
+    res.redirect(`${base}/${owner}/${id}`);
   });
 
   // View + run
-  router.get('/:id', (req, res) => view(req, res));
-  router.post('/:id/run', (req, res) => view(req, res, { run: req.body }));
-  router.post('/:id/delete', async (req, res) => {
-    await store.remove(req.params.id);
+  router.get('/:owner/:id', (req, res) => view(req, res));
+  router.post('/:owner/:id/run', (req, res) => view(req, res, { run: req.body }));
+  router.post('/:owner/:id/delete', async (req, res) => {
+    await store.remove(req.params.owner, req.params.id);
     res.redirect(base);
   });
 
   async function view(req, res, opts = {}) {
-    const id = req.params.id;
+    const { owner, id } = req.params;
     let mod, def, source;
     try {
-      ({ definition: def, module: mod } = await store.get(id));
-      source = await store.source(id);
+      ({ definition: def, module: mod } = await store.get(owner, id));
+      source = await store.source(owner, id);
     } catch (err) {
-      return res.send(shell('Missing', ui.empty(`Could not load "${id}": ${err.message}`)));
+      return res.send(shell('Missing', ui.empty(`Could not load "${owner}/${id}": ${err.message}`)));
     }
 
     let resultPanel = '';
     if (opts.run) {
+      const agentTag = { kind: 'agent', id, owner };
       try {
-        const out = await mod.run({ task: opts.run.task || '' }, execCtx);
+        const out = await usage.track('agent', agentTag)(() => mod.run({ task: opts.run.task || '' }, makeExecCtx(agentTag)));
         resultPanel = html`<div class="eng-panel"><h3>Reply <span class="dim">· ${out.provider}/${out.model}</span></h3>
           <pre>${out.reply}</pre>
           ${Object.keys(out.skillOutputs || {}).length ? html`<h4>Skill outputs</h4><pre>${JSON.stringify(out.skillOutputs, null, 2)}</pre>` : ''}</div>`;
@@ -190,20 +200,20 @@ export function createFeature(ctx) {
     }
 
     const runForm = ui.configForm({
-      action: `${base}/${id}/run`,
+      action: `${base}/${owner}/${id}/run`,
       submit: 'Run agent',
       fields: [{ name: 'task', label: (def.inputs?.[0]?.label) || 'Task', type: 'text', rows: 4, required: true }],
     });
 
     const body = html`
-      ${ui.pageHead({ title: def.name || id, subtitle: def.description, actions: ui.btn({ href: base, label: 'Library' }) })}
+      ${ui.pageHead({ title: def.name || id, subtitle: def.description, actions: html`${ui.badge(owner)}${ui.btn({ href: base, label: 'Library' })}` })}
       <div class="meta">model: ${def.model} · skills: ${(def.skills || []).join(', ') || 'none'} · provider: ${provider.name}</div>
       ${resultPanel}
       <div class="eng-cols">
         <div><h3 class="eng-section">Run</h3>${runForm}</div>
         <div><h3 class="eng-section">Source (code-first)</h3><pre class="eng-source">${source}</pre></div>
       </div>`;
-    res.send(shell(def.name || id, body, [...crumb, { href: `${base}/${id}`, label: def.name || id }]));
+    res.send(shell(def.name || id, body, [...crumb, { href: `${base}/${owner}/${id}`, label: def.name || id }]));
   }
 
   return router;

@@ -1,5 +1,5 @@
 import express from 'express';
-import { html } from '../../lib/html.js';
+import { html, raw } from '../../lib/html.js';
 import { CAPABILITIES, GATES, TOOLS, LOOPS } from './registry.js';
 
 export const meta = {
@@ -9,7 +9,7 @@ export const meta = {
 };
 
 export function createFeature(ctx) {
-  const { ui, page, stores, base } = ctx;
+  const { ui, page, stores, base, usage } = ctx;
   const router = express.Router();
 
   const crumb = [{ href: base, label: 'Command Center' }];
@@ -21,7 +21,8 @@ export function createFeature(ctx) {
   const hard = tag('hard', '#a32d2d');
   const soft = tag('soft', '#854f0b');
   const gateTag = (kind) => (kind === 'hard' ? hard : soft);
-  const inspect = (kind, id, label = 'Inspect') => ui.btn({ href: `${base}/inspect/${kind}/${id}`, label });
+  const inspect = (kind, idOrPath, label = 'Inspect') =>
+    ui.btn({ href: `${base}/inspect/${kind}/${idOrPath}`, label });
   const stat = (label, value, sub) => html`<div class="card" style="padding:14px 16px">
     <div class="dim" style="font-size:0.78em">${label}</div>
     <div style="font-size:1.7em;font-weight:600">${value}</div>
@@ -32,14 +33,23 @@ export function createFeature(ctx) {
   async function assemble() {
     const agents = await stores.agents.list();
     const skills = await stores.skills.list();
-    return { agents, skills };
+    const usageSummary = await usage.summary();
+    const usageFor = (kind, owner, id) => usageSummary.find((u) => u.kind === kind && u.owner === owner && u.id === id);
+    return { agents, skills, usageSummary, usageFor };
   }
+
+  // "3· 12:04" — count, then the time of the last run; dim/empty if never used.
+  const usageCell = (u) =>
+    u
+      ? html`${u.count}× ${u.errors ? html` ${ui.badge(`${u.errors} err`, 'errored')}` : ''} <span class="dim">· ${u.lastAt.slice(0, 16).replace('T', ' ')}</span>`
+      : html`<span class="dim">never used</span>`;
 
   // ── overview / catalog ─────────────────────────────────────────────────────
   router.get('/', async (req, res) => {
-    const { agents, skills } = await assemble();
+    const { agents, skills, usageSummary, usageFor } = await assemble();
     const hardCount = GATES.filter((g) => g.kind === 'hard').length;
     const softCount = GATES.length - hardCount;
+    const live = req.query.live === '1';
 
     const stats = html`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:18px">
       ${stat('Personas', agents.length, 'agents')}
@@ -48,26 +58,31 @@ export function createFeature(ctx) {
       ${stat('Capabilities', CAPABILITIES.length, 'server functions')}
       ${stat('Gates', GATES.length, `${hardCount} hard · ${softCount} soft`)}
       ${stat('Loops', LOOPS.length, 'orchestration')}
+      ${stat('Events logged', usageSummary.reduce((n, u) => n + u.count, 0), 'invocations + LLM calls')}
     </div>`;
 
     const personaTable = ui.table(
-      ['Persona', 'Model', 'Skills', 'Bounds', ''],
+      ['Persona', 'Owner', 'Model', 'Skills', 'Bounds', 'Used', ''],
       agents.map((a) => [
         a.broken ? html`${a.id} ${ui.badge('broken', 'errored')}` : (a.name || a.id),
+        ui.badge(a.owner),
         a.model || '—',
         (a.skills || []).length ? (a.skills || []).join(', ') : html`<span class="dim">none</span>`,
         (a.bounds || []).length ? (a.bounds || []).join(', ') : html`<span class="dim">none set</span>`,
-        inspect('persona', a.id),
+        usageCell(usageFor('agent', a.owner, a.id)),
+        inspect('persona', `${a.owner}/${a.id}`),
       ]),
     );
 
     const skillTable = ui.table(
-      ['Skill', 'Version', 'Inputs', ''],
+      ['Skill', 'Owner', 'Version', 'Inputs', 'Used', ''],
       skills.map((s) => [
         s.broken ? html`${s.id} ${ui.badge('broken', 'errored')}` : (s.name || s.id),
+        ui.badge(s.owner),
         s.version || '—',
         String((s.inputs || []).length),
-        inspect('skill', s.id),
+        usageCell(usageFor('skill', s.owner, s.id)),
+        inspect('skill', `${s.owner}/${s.id}`),
       ]),
     );
 
@@ -97,10 +112,28 @@ export function createFeature(ctx) {
       ]),
     );
 
+    const recent = (await usage.all()).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 25);
+    const activityTable = recent.length
+      ? ui.table(
+          ['When', 'Kind', 'Component', 'Triggered by', 'Result'],
+          recent.map((e) => [
+            e.ts.slice(11, 19),
+            ui.badge(e.kind),
+            e.owner ? `${e.owner}/${e.id}` : e.id,
+            e.calledBy ? html`${e.calledBy.owner}/${e.calledBy.id} <span class="dim">(${e.calledBy.kind})</span>` : html`<span class="dim">—</span>`,
+            e.ok === false
+              ? ui.badge('error', 'errored')
+              : html`${ui.badge('ok', 'running')}${e.ms != null ? html` <span class="dim">${e.ms}ms</span>` : ''}`,
+          ]),
+        )
+      : ui.empty('No activity logged yet — run a skill or agent.');
+
     const body = html`
+      ${live ? raw('<meta http-equiv="refresh" content="5">') : ''}
       ${ui.pageHead({
         title: '🛰️ Command Center',
         subtitle: 'Every component an agent system is built from — and whether each gate is a guarantee (hard) or just a request (soft).',
+        actions: ui.btn({ href: `${base}${live ? '' : '?live=1'}`, label: live ? '⏸ Pause' : '▶ Watch live' }),
       })}
       ${stats}
       ${section('Personas', 'who does the work · live from the agent store', personaTable)}
@@ -108,7 +141,8 @@ export function createFeature(ctx) {
       ${section('Capabilities', 'server-side functions agents can call', capTable)}
       ${section('Gates', 'the leash — hard is structural, soft is a request', gateTable)}
       ${section('Tools', 'what an agent’s bounds can grant', toolTable)}
-      ${section('Loops', 'iterate mechanisms', LOOPS.length ? '' : ui.empty('No loops yet — the delivery loop is the first.'))}`;
+      ${section('Loops', 'iterate mechanisms', LOOPS.length ? '' : ui.empty('No loops yet — the delivery loop is the first.'))}
+      ${section('Activity', 'supervisor feed — every invocation, LLM call, and what triggered it', activityTable)}`;
     res.send(shell('Command Center', body));
   });
 
@@ -118,11 +152,19 @@ export function createFeature(ctx) {
     shell(title, html`${ui.pageHead({ title, subtitle: badge, actions: ui.btn({ href: base, label: '← Command Center' }) })}${body}`,
       [...crumb, { href: '#', label: title }]);
 
+  // persona/skill live in multi-owner stores, so their inspect path carries an
+  // owner segment; capability/gate/tool are single-id declared registries.
+  router.get('/inspect/persona/:owner/:id', async (req, res) => {
+    try { return res.send(await inspectPersona(req.params.owner, req.params.id)); }
+    catch (err) { return res.send(shell('Inspect', ui.empty(`Could not inspect persona/${req.params.owner}/${req.params.id}: ${err.message}`))); }
+  });
+  router.get('/inspect/skill/:owner/:id', async (req, res) => {
+    try { return res.send(await inspectSkill(req.params.owner, req.params.id)); }
+    catch (err) { return res.send(shell('Inspect', ui.empty(`Could not inspect skill/${req.params.owner}/${req.params.id}: ${err.message}`))); }
+  });
   router.get('/inspect/:kind/:id', async (req, res) => {
     const { kind, id } = req.params;
     try {
-      if (kind === 'persona') return res.send(await inspectPersona(id));
-      if (kind === 'skill') return res.send(await inspectSkill(id));
       if (kind === 'capability') return res.send(inspectCapability(id));
       if (kind === 'gate') return res.send(inspectGate(id));
       if (kind === 'tool') return res.send(inspectTool(id));
@@ -132,8 +174,28 @@ export function createFeature(ctx) {
     res.send(shell('Inspect', ui.empty(`Unknown component kind "${kind}".`)));
   });
 
-  async function inspectPersona(id) {
-    const { definition: d } = await stores.agents.get(id);
+  // Per-item usage detail for the inspector pages — "where is this used, how
+  // often" answered for one specific registry item rather than the rollup.
+  async function usageSection(kind, owner, id) {
+    const events = (await usage.all())
+      .filter((e) => e.kind === kind && e.owner === owner && e.id === id)
+      .sort((a, b) => b.ts.localeCompare(a.ts));
+    if (!events.length) return html`<h3 class="eng-section">Usage</h3>${ui.empty('Never invoked.')}`;
+    const errors = events.filter((e) => e.ok === false).length;
+    const table = ui.table(
+      ['When', 'Triggered by', 'Result', 'Duration'],
+      events.slice(0, 15).map((e) => [
+        e.ts.slice(0, 16).replace('T', ' '),
+        e.calledBy ? html`${e.calledBy.owner}/${e.calledBy.id} <span class="dim">(${e.calledBy.kind})</span>` : html`<span class="dim">direct</span>`,
+        e.ok === false ? ui.badge('error', 'errored') : ui.badge('ok', 'running'),
+        e.ms != null ? `${e.ms}ms` : '—',
+      ]),
+    );
+    return html`<h3 class="eng-section">Usage — ${events.length} call${events.length === 1 ? '' : 's'}${errors ? html` · ${errors} error${errors === 1 ? '' : 's'}` : ''}</h3>${table}`;
+  }
+
+  async function inspectPersona(owner, id) {
+    const { definition: d } = await stores.agents.get(owner, id);
     const skillLinks = (d.skills || []).length
       ? (d.skills || []).map((s) => inspect('skill', s, s))
       : html`<span class="dim">none</span>`;
@@ -143,6 +205,7 @@ export function createFeature(ctx) {
     const body = html`
       ${kv([
         ['Kind', html`persona · agent`],
+        ['Owner', ui.badge(owner)],
         ['Model', d.model || '—'],
         ['Description', d.description || html`<span class="dim">—</span>`],
         ['Skills', skillLinks],
@@ -151,14 +214,15 @@ export function createFeature(ctx) {
         ['Emits', 'reply · skill outputs · usage'],
       ])}
       <h3 class="eng-section">Persona (system prompt)</h3>
-      <pre class="eng-source">${d.systemPrompt || '(none)'}</pre>`;
+      <pre class="eng-source">${d.systemPrompt || '(none)'}</pre>
+      ${await usageSection('agent', owner, id)}`;
     return detailPage(d.name || id, 'persona · agent', body);
   }
 
-  async function inspectSkill(id) {
-    const { definition: d, module: mod } = await stores.skills.get(id);
+  async function inspectSkill(owner, id) {
+    const { definition: d, module: mod } = await stores.skills.get(owner, id);
     let source = '';
-    try { source = await stores.skills.source(id); } catch {}
+    try { source = await stores.skills.source(owner, id); } catch {}
     const inputsTable = (d.inputs || []).length
       ? ui.table(['Name', 'Type', 'Label'], (d.inputs || []).map((i) => [i.name, i.type || 'string', i.label || '']))
       : ui.empty('No inputs.');
@@ -166,13 +230,15 @@ export function createFeature(ctx) {
     const body = html`
       ${kv([
         ['Kind', 'skill · code function'],
+        ['Owner', ui.badge(owner)],
         ['Version', d.version || '—'],
         ['Description', d.description || html`<span class="dim">—</span>`],
         ['Tests', tests.length ? `${tests.length} case(s)` : html`<span class="dim">none</span>`],
       ])}
       <h3 class="eng-section">Inputs</h3>${inputsTable}
       ${tests.length ? html`<h3 class="eng-section">Tests</h3><pre class="eng-source">${JSON.stringify(tests, null, 2)}</pre>` : ''}
-      <h3 class="eng-section">Source (code-first)</h3><pre class="eng-source">${source}</pre>`;
+      <h3 class="eng-section">Source (code-first)</h3><pre class="eng-source">${source}</pre>
+      ${await usageSection('skill', owner, id)}`;
     return detailPage(d.name || id, 'skill · code function', body);
   }
 

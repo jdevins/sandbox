@@ -110,15 +110,19 @@ test('worker overrides (rename + strategy edit) apply', async () => {
 });
 
 test('the foundry observatory page is served', async () => {
+  process.env.NODE_ENV = 'test';
+  process.env.ENGINE_LLM = 'mock';
   const { app, appManager } = await createServer();
   await appManager.discoverAll();
   const server = app.listen(0);
-  const base = `http://localhost:${server.address().port}`;
+  try {
+    const base = `http://localhost:${server.address().port}`;
 
-  const res = await fetch(`${base}/apps/claude-engine/features/foundry/letter-a`);
-  assert.equal(res.status, 200);
-  const body = await res.text();
-  assert.ok(body.includes('foundry-data'), 'page embeds the client payload');
-
-  server.close();
+    const res = await fetch(`${base}/apps/claude-engine/features/foundry/letter-a`);
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.ok(body.includes('foundry-data'), 'page embeds the client payload');
+  } finally {
+    server.close();
+  }
 });

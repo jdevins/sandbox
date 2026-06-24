@@ -1,31 +1,33 @@
 import express from 'express';
 import path from 'node:path';
 import cron from 'node-cron';
-import { html } from '../../lib/html.js';
+import { html, raw } from '../../lib/html.js';
 import { jsonStore } from '../../lib/store.js';
-import { buildDayRepack, findAllDates, readSessionRecords, scanGrouped } from './repack.js';
-import { summarizeDay, summarizeDayReport, DEFAULT_REPORT_SYSTEM } from './summarize.js';
+import { buildDayRepack, findAllDates, localDate, readSessionRecords, scanGrouped } from './repack.js';
+import { summarizeDay, summarizeTrend, daySummary, DEFAULT_DAILY_SYSTEM, DEFAULT_TREND_SYSTEM } from './summarize.js';
 
 export const meta = {
   name: 'Session Repack',
   description: 'Daily recap of Claude work — zero-cost repack of local transcripts, with optional LLM summaries.',
   icon: '📋',
-  version: '0.2.0',
+  version: '0.3.0',
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDate();
 const KIND_BADGE = { interactive: 'ok', automated: '', subagent: 'warn' };
 
 export function createFeature(ctx) {
   const { ui, page, provider, base, paths } = ctx;
   const store = jsonStore({ dir: path.join(paths.data, 'repacks') });
+  const trendStore = jsonStore({ dir: path.join(paths.data, 'trends') });
   const router = express.Router();
 
   async function getConfig() {
     try { return await store.get('config'); } catch { return {}; }
   }
   async function saveConfig(data) {
-    await store.save({ id: 'config', ...data });
+    const prev = await getConfig();
+    await store.save({ id: 'config', ...prev, ...data });
   }
 
   const crumb = [{ href: base, label: 'Repacks' }];
@@ -47,8 +49,10 @@ export function createFeature(ctx) {
 
   // Daily in-process timer (NOT the claude -p scheduler — that would cost tokens).
   // Guarded on globalThis so module re-imports on app restart don't stack timers.
+  // Skipped under the test runner: node-cron's heartbeat timer never unrefs, so
+  // it would pin the event loop open and the test process would never exit.
   const GUARD = Symbol.for('session-repack.cron');
-  if (!globalThis[GUARD]) {
+  if (!globalThis[GUARD] && process.env.NODE_ENV !== 'test') {
     globalThis[GUARD] = cron.schedule('55 23 * * *', () => {
       runRepack().catch((e) => console.warn(`[session-repack] daily repack failed: ${e.message}`));
     });
@@ -60,35 +64,76 @@ export function createFeature(ctx) {
   if (!globalThis[BF_KEY]) globalThis[BF_KEY] = { running: false, total: 0, done: 0, errors: [], current: null, startedAt: null, finishedAt: null };
   const bf = () => globalThis[BF_KEY];
 
-  // Singleton summarize job state.
+  // Singleton summarize/trend job state (one background job at a time).
   const SUM_KEY = Symbol.for('session-repack.summarize');
-  if (!globalThis[SUM_KEY]) globalThis[SUM_KEY] = { running: false, total: 0, done: 0, errors: [], current: null, startedAt: null, finishedAt: null };
+  if (!globalThis[SUM_KEY]) globalThis[SUM_KEY] = { running: false, label: '', total: 0, done: 0, errors: [], current: null, startedAt: null, finishedAt: null };
   const sumState = () => globalThis[SUM_KEY];
 
-  async function runSummarize(byDate, force) {
+  // Generic background-job wrapper — guards against concurrent runs and always
+  // clears `running`. Returns false if a job is already in flight.
+  function runJob(label, total, fn) {
     const state = sumState();
-    if (state.running) return;
-    const total = [...byDate.values()].reduce((n, ids) => n + ids.length, 0);
-    Object.assign(state, { running: true, total, done: 0, errors: [], current: null, startedAt: new Date().toISOString(), finishedAt: null });
-    for (const [date, sessionIds] of byDate) {
-      let day;
-      try { day = await store.get(date); } catch { state.done += sessionIds.length; continue; }
-      const toSummarize = force
-        ? sessionIds
-        : sessionIds.filter((id) => { const s = day.sessions.find((s) => s.sessionId === id); return s && !s.summary; });
-      for (const id of toSummarize) {
-        const s = day.sessions.find((s) => s.sessionId === id);
-        state.current = s?.title || id.slice(0, 8);
+    if (state.running) return false;
+    Object.assign(state, { running: true, label, total, done: 0, errors: [], current: null, startedAt: new Date().toISOString(), finishedAt: null });
+    Promise.resolve()
+      .then(() => fn(state))
+      .catch((e) => state.errors.push(`Fatal: ${e.message}`))
+      .finally(() => Object.assign(state, { running: false, current: null, finishedAt: new Date().toISOString() }));
+    return true;
+  }
+
+  // Daily summaries for a set of dates. Skips days that already have a summary
+  // unless `force`.
+  function summarizeDaysJob(dates, force) {
+    return runJob('Summarizing days', dates.length, async (state) => {
+      const dailyPrompt = (await getConfig()).dailyPrompt;
+      for (const date of dates) {
+        state.current = date;
         try {
-          await summarizeDay(day, provider, [id]);
-          await store.save(day);
+          const day = await store.get(date);
+          if (force || !daySummary(day)) {
+            await summarizeDay(day, provider, dailyPrompt);
+            await store.save(day);
+          }
         } catch (e) {
-          state.errors.push(`${date}/${id.slice(0, 8)}: ${e.message}`);
+          state.errors.push(`${date}: ${e.message}`);
         }
         state.done++;
       }
-    }
-    Object.assign(state, { running: false, current: null, finishedAt: new Date().toISOString() });
+    });
+  }
+
+  // Trend over a date range: first ensure each day in range is summarized
+  // (respecting `force`), then summarize the trend across those days.
+  function trendJob(kind, start, end, force) {
+    return runJob('Summarizing trend', 1, async (state) => {
+      const config = await getConfig();
+      const days = (await store.list())
+        .filter((d) => Array.isArray(d.sessions) && d.date >= start && d.date <= end)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      state.total = days.length + 1;
+      for (const day of days) {
+        state.current = day.date;
+        try {
+          if (force || !daySummary(day)) {
+            await summarizeDay(day, provider, config.dailyPrompt);
+            await store.save(day);
+          }
+        } catch (e) {
+          state.errors.push(`${day.date}: ${e.message}`);
+        }
+        state.done++;
+      }
+      state.current = 'trend';
+      const withSummary = days.filter((d) => daySummary(d));
+      if (withSummary.length) {
+        const trend = await summarizeTrend(withSummary, provider, config.trendPrompt, { kind, start, end });
+        await trendStore.save(trend);
+      } else {
+        state.errors.push('No summarized days in range — nothing to trend.');
+      }
+      state.done++;
+    });
   }
 
   async function runBackfill() {
@@ -114,33 +159,99 @@ export function createFeature(ctx) {
     Object.assign(state, { running: false, current: null, finishedAt: new Date().toISOString() });
   }
 
-  // ── Library: all repacked days ─────────────────────────────────────────────
+  // ── Library: all repacked days, grouped by week ────────────────────────────
   router.get('/', async (req, res) => {
-    const days = (await store.list()).filter((d) => Array.isArray(d.sessions));
-    const cards = days.map((d) => {
-      const real = d.sessions.filter((s) => s.kind === 'interactive');
-      const summarized = real.filter((s) => s.summary).length;
-      return ui.card({
-        title: d.date,
-        badge: ui.badge(`${real.length} session${real.length === 1 ? '' : 's'}`),
-        desc: real.map((s) => s.title).slice(0, 4).join(' · ') || 'No interactive sessions',
-        meta: html`${fmtTokens(d.tokens)} · ${summarized}/${real.length} summarized · ${d.counts.automated || 0} automated`,
-        actions: [ui.btn({ href: `${base}/${d.date}`, label: 'Open', primary: true })],
+    const days = (await store.list())
+      .filter((d) => Array.isArray(d.sessions))
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    const trends = await trendStore.list().catch(() => []);
+    const weekTrend = new Map(trends.filter((t) => t.kind === 'week').map((t) => [t.start, t]));
+
+    const byWeek = new Map();
+    for (const d of days) {
+      const wk = weekStart(d.date);
+      if (!byWeek.has(wk)) byWeek.set(wk, []);
+      byWeek.get(wk).push(d);
+    }
+
+    const currentWk = weekStart(today());
+    const sections = [...byWeek.entries()].map(([wk, wDays]) => {
+      const isCurrentWeek = wk === currentWk;
+      const cards = wDays.map((d) => {
+        const real = d.sessions.filter((s) => s.kind === 'interactive');
+        const summary = daySummary(d);
+        return ui.card({
+          title: d.date,
+          // Summarized day → green check; otherwise the session count.
+          badge: summary
+            ? ui.badge('summarized', 'ok')
+            : ui.badge(`${real.length} session${real.length === 1 ? '' : 's'}`),
+          // Summary replaces the repack info once present.
+          desc: summary
+            ? html`<div class="summary-text">${clip(summary, 280)}</div>`
+            : real.map((s) => s.title).slice(0, 4).join(' · ') || 'No interactive sessions',
+          meta: summary ? '' : html`${fmtTokens(d.tokens)} · ${d.counts.automated || 0} automated`,
+          actions: [
+            ui.btn({ href: `${base}/${d.date}`, label: 'Open', primary: true }),
+            ui.btn({
+              action: 'post',
+              name: `${base}/${d.date}/summarize${summary ? '?force=1' : ''}`,
+              label: summary ? '↻' : '✨',
+              title: summary ? 'Re-summarize' : 'Summarize',
+              llm: true,
+              status: `${base}/job/status.json`,
+            }),
+          ],
+        });
       });
+      const totalSessions = wDays.reduce((n, d) => n + d.sessions.filter((s) => s.kind === 'interactive').length, 0);
+      const trend = weekTrend.get(wk);
+      const trendBtn = ui.btn({
+        action: 'post',
+        name: `${base}/trend/week/${wk}${trend ? '?force=1' : ''}`,
+        label: trend ? '↻ Re-summarize week' : '✨ Summarize week',
+        llm: true,
+        status: `${base}/job/status.json`,
+      });
+      const trendPanel = trend
+        ? html`<div class="eng-panel" style="margin-bottom:12px"><strong>📈 Week trend</strong> <span class="dim">· ${trend.meta?.provider || 'llm'}</span><div class="summary-text" style="margin-top:6px">${trend.summary}</div></div>`
+        : '';
+      return html`<details class="collapsible" style="margin-bottom:14px" ${isCurrentWeek ? 'open' : ''}>
+        <summary>${weekLabel(wk)} <span class="coll-count">(${wDays.length} day${wDays.length === 1 ? '' : 's'} · ${totalSessions} session${totalSessions === 1 ? '' : 's'})</span>${trend ? html` ${ui.badge('trend', 'ok')}` : ''}</summary>
+        <div class="coll-body">
+          <div class="row" style="margin-bottom:12px">${trendBtn}</div>
+          ${trendPanel}
+          ${ui.grid(cards)}
+        </div>
+      </details>`;
     });
-    const done = parseInt(req.query.summarized || '0', 10);
-    const flash = done
-      ? html`<div class=”badge ok” style=”margin-bottom:12px;display:inline-block”>✓ Summarized ${done} session${done === 1 ? '' : 's'}.</div>`
-      : '';
+
+    // Bulk action bar — a real form so the Re-summarize checkbox rides along to
+    // whichever button is pressed (formaction routes it). Everything but the
+    // primary "Repack today" action lives behind the header overflow menu.
+    const actions = html`
+      ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today', primary: true })}
+      ${ui.menu(html`
+        <form method="POST">
+          <label class="eng-check" style="font-size:12px;margin:0"><input type="checkbox" name="force" value="1"/> Re-summarize</label>
+          <button class="btn llm" type="submit" formaction="${base}/${today()}/summarize" data-llm-status="${base}/job/status.json">✨ Summarize today</button>
+          <button class="btn llm" type="submit" formaction="${base}/trend/week/${currentWk}" data-llm-status="${base}/job/status.json">📈 Summarize week</button>
+        </form>
+        ${ui.btn({ href: `${base}/trends`, label: '📈 Trends' })}
+        ${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}
+        ${ui.btn({ href: `${base}/prompt`, label: '✏️ Prompts' })}
+        ${ui.btn({ action: 'post', name: `${base}/backfill`, label: '📥 Backfill history' })}
+      `)}`;
+
     const body = html`
       ${ui.pageHead({
         title: '📋 Session Repack',
         subtitle: 'Zero-cost daily recap of Claude work. Summaries are opt-in (LLM).',
-        actions: html`${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}${ui.btn({ href: `${base}/summarize`, label: '✨ Summarize sessions' })}${ui.btn({ action: 'post', name: `${base}/backfill`, label: '📥 Backfill history' })}${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today', primary: true })}`,
+        actions,
       })}
-      ${flash}
-      <div class=”meta”>Provider for summaries: <strong>${provider.name}</strong></div>
-      ${days.length ? ui.grid(cards) : ui.empty('No repacks yet — run “Repack today”.')}`;
+      <div class="meta">Provider for summaries: <strong>${provider.name}</strong></div>
+      ${sections.length ? sections : ui.empty('No repacks yet — run “Repack today”.')}`;
     res.send(shell('Repacks', body));
   });
 
@@ -294,183 +405,157 @@ export function createFeature(ctx) {
     res.send(shell(s.running ? 'Backfill…' : 'Backfill done', body, crumb));
   });
 
-  // ── Cross-day summarize page ───────────────────────────────────────────────
-  router.get('/summarize', async (req, res) => {
-    const winDays = req.query.days === 'all' ? null : parseInt(req.query.days || '14', 10);
-    let afterDate = null;
-    if (winDays) {
-      const d = new Date();
-      d.setDate(d.getDate() - winDays);
-      afterDate = d.toISOString().slice(0, 10);
+  // ── Trend: week (one-click) and custom range ───────────────────────────────
+  router.post('/trend/week/:wk', (req, res) => {
+    const start = req.params.wk;
+    const end = addDays(start, 6);
+    const force = !!(req.body?.force || req.query?.force);
+    trendJob('week', start, end, force);
+    res.redirect(`${base}/job/status?back=${encodeURIComponent(base)}`);
+  });
+
+  router.post('/trend/range', (req, res) => {
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const start = req.body?.start;
+    const end = req.body?.end;
+    const back = `${base}/trends`;
+    if (!DATE_RE.test(start || '') || !DATE_RE.test(end || '') || start > end) {
+      return res.redirect(`${back}?error=range`);
     }
+    const force = !!(req.body?.force || req.query?.force);
+    trendJob('range', start, end, force);
+    res.redirect(`${base}/job/status?back=${encodeURIComponent(back)}`);
+  });
 
-    const allDays = (await store.list()).filter((d) => Array.isArray(d.sessions));
-    const filtered = (afterDate ? allDays.filter((d) => d.date >= afterDate) : allDays)
-      .sort((a, b) => b.date.localeCompare(a.date));
+  // Re-run a saved custom-range trend (params in path so the empty-body POST
+  // button can carry them). Always forces.
+  router.post('/trend/rerun/:start/:end', (req, res) => {
+    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    const { start, end } = req.params;
+    if (!DATE_RE.test(start) || !DATE_RE.test(end) || start > end) {
+      return res.redirect(`${base}/trends?error=range`);
+    }
+    trendJob('range', start, end, true);
+    res.redirect(`${base}/job/status?back=${encodeURIComponent(`${base}/trends`)}`);
+  });
 
-    const totalInteractive = filtered.reduce((n, d) => n + d.sessions.filter((s) => s.kind === 'interactive').length, 0);
-    const totalUnsummarized = filtered.reduce((n, d) => n + d.sessions.filter((s) => s.kind === 'interactive' && !s.summary).length, 0);
+  // ── Trends page: saved trends + custom-range runner ────────────────────────
+  router.get('/trends', async (req, res) => {
+    const trends = (await trendStore.list().catch(() => []))
+      .sort((a, b) => (b.end || '').localeCompare(a.end || ''));
 
-    const done = parseInt(req.query.done || '0', 10);
-    const flash = done
-      ? html`<div class="badge ok" style="margin-bottom:12px;display:inline-block">✓ Summarized ${done} session${done === 1 ? '' : 's'}.</div>`
+    const cards = trends.map((t) =>
+      ui.card({
+        title: t.kind === 'week' ? `Week of ${t.start}` : `${t.start} → ${t.end}`,
+        badge: ui.badge(t.kind, t.kind === 'week' ? 'ok' : ''),
+        desc: html`<div class="summary-text">${clip(t.summary, 320)}</div>`,
+        meta: html`${t.days?.length || 0} days · ${t.meta?.provider || 'llm'} · ${t.generatedAt?.slice(0, 10) || ''}`,
+        actions: [
+          ui.btn({
+            action: 'post',
+            name: t.kind === 'week'
+              ? `${base}/trend/week/${t.start}?force=1`
+              : `${base}/trend/rerun/${t.start}/${t.end}?force=1`,
+            label: '↻ Re-run',
+            llm: true,
+            status: `${base}/job/status.json`,
+          }),
+        ],
+      }),
+    );
+
+    const runner = html`<form method="POST" action="${base}/trend/range" class="card" style="margin-bottom:18px">
+      <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px" class="dim">From
+          <input type="date" name="start" required style="background:var(--bg-elev-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px"/></label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px" class="dim">To
+          <input type="date" name="end" required style="background:var(--bg-elev-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px"/></label>
+        <label class="eng-check" style="font-size:12px"><input type="checkbox" name="force" value="1"/> Re-summarize</label>
+        <button type="submit" class="btn llm" data-llm-status="${base}/job/status.json">📈 Summarize range</button>
+      </div>
+    </form>`;
+
+    const errBanner = req.query.error === 'range'
+      ? html`<div class="badge" style="margin-bottom:12px;display:inline-block;border-color:var(--bad)">⚠ Pick a valid From/To range (From ≤ To).</div>`
       : '';
-
-    const windowChip = (label, d) =>
-      ui.btn({ href: `${base}/summarize?days=${d}`, label, primary: String(winDays || 'all') === String(d) });
-    const windowNav = html`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:16px">
-      <span class="dim" style="line-height:28px;font-size:12px">Window:</span>
-      ${windowChip('7d', '7')} ${windowChip('14d', '14')} ${windowChip('30d', '30')} ${windowChip('All', 'all')}
-    </div>`;
-
-    const sessionGroups = filtered.map((d) => {
-      const real = d.sessions.filter((s) => s.kind === 'interactive');
-      if (!real.length) return '';
-      const rows = real.map((s) => {
-        const summarized = !!s.summary;
-        const preview = summarized ? s.summary.slice(0, 110) + (s.summary.length > 110 ? '…' : '') : '';
-        return html`<label class="row session-row" style="padding:8px 10px;border-radius:4px;cursor:pointer;align-items:flex-start;flex-wrap:nowrap" data-summarized="${summarized ? '1' : '0'}">
-          <input type="checkbox" name="sessions" value="${d.date}:${s.sessionId}" style="margin-top:3px;flex-shrink:0" ${summarized ? '' : 'checked'}>
-          <div style="flex:1;min-width:0">
-            <div class="row">
-              <span>${s.title}</span>
-              ${summarized ? ui.badge('summarized', 'ok') : ui.badge('raw')}
-              <span class="dim" style="font-size:12px">${s.start?.slice(11, 16) || ''}</span>
-            </div>
-            ${preview ? html`<div class="dim" style="font-size:12px;margin-top:2px">${preview}</div>` : ''}
-          </div>
-        </label>`;
-      });
-      return html`<div style="margin-bottom:14px">
-        <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:var(--text-dim)">${d.date}</div>
-        <div class="card" style="padding:4px 0">${rows}</div>
-      </div>`;
-    });
 
     const body = html`
       ${ui.pageHead({
-        title: '✨ Summarize Sessions',
-        subtitle: `${totalInteractive} interactive · ${totalUnsummarized} unsummarized`,
+        title: '📈 Trends',
+        subtitle: 'Summaries across multiple days. Week trends also appear in the library headers.',
         actions: ui.btn({ href: base, label: '← Repacks' }),
       })}
-      ${flash}
-      ${windowNav}
-      <form method="POST" action="${base}/summarize/batch">
-        <input type="hidden" name="days" value="${winDays || 'all'}">
-        <div class="row" style="gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
-          <button type="button" onclick="selectUnsummarized()" class="btn">Check unsummarized</button>
-          <button type="button" onclick="selectAll()" class="btn">Check all</button>
-          <button type="button" onclick="deselectAll()" class="btn">Uncheck all</button>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:auto">
-            <input type="checkbox" name="force" value="on"> Force re-summarize
-          </label>
-          <button type="submit" class="btn llm" id="submit-btn">✨ Summarize selected</button>
-        </div>
-        ${filtered.length ? sessionGroups : ui.empty('No repacked days in this window — run "Repack today" first.')}
-      </form>
-      <script>
-        function updateBtn() {
-          const n = document.querySelectorAll('input[name=sessions]:checked').length;
-          document.getElementById('submit-btn').textContent = n
-            ? 'Summarize selected (' + n + ')'
-            : 'Summarize selected';
-        }
-        document.querySelectorAll('input[name=sessions]').forEach(cb => cb.addEventListener('change', updateBtn));
-        function selectUnsummarized() {
-          document.querySelectorAll('.session-row').forEach(r => {
-            r.querySelector('input').checked = r.dataset.summarized === '0';
-          });
-          updateBtn();
-        }
-        function selectAll() {
-          document.querySelectorAll('input[name=sessions]').forEach(cb => cb.checked = true);
-          updateBtn();
-        }
-        function deselectAll() {
-          document.querySelectorAll('input[name=sessions]').forEach(cb => cb.checked = false);
-          updateBtn();
-        }
-        updateBtn();
-      </script>`;
-    res.send(shell('Summarize Sessions', body, [...crumb, { href: '#', label: 'summarize' }]));
+      ${errBanner}
+      ${runner}
+      ${cards.length ? ui.grid(cards) : ui.empty('No trends yet — run a week or a custom range.')}`;
+    res.send(shell('Trends', body, [...crumb, { href: '#', label: 'trends' }]));
   });
 
-  router.post('/summarize/batch', async (req, res) => {
-    let selected = req.body.sessions || [];
-    if (!Array.isArray(selected)) selected = [selected];
-    const force = req.body.force === 'on';
-    const backDays = req.body.days || '14';
-
-    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-    const byDate = new Map();
-    for (const entry of selected) {
-      const colon = entry.indexOf(':');
-      if (colon < 0) continue;
-      const date = entry.slice(0, colon);
-      if (!DATE_RE.test(date)) continue;
-      const sessionId = entry.slice(colon + 1);
-      if (!byDate.has(date)) byDate.set(date, []);
-      byDate.get(date).push(sessionId);
-    }
-
-    if (!sumState().running) {
-      runSummarize(byDate, force).catch((e) => {
-        const s = sumState();
-        s.running = false;
-        s.errors = [...(s.errors || []), `Fatal: ${e.message}`];
-        s.finishedAt = new Date().toISOString();
-      });
-    }
-    res.redirect(`${base}/summarize/status?back=${encodeURIComponent(`${base}/summarize?days=${backDays}`)}`);
-  });
-
-  router.get('/summarize/status', (req, res) => {
+  // ── Job status (summarize / trend) ─────────────────────────────────────────
+  // JSON variant — polled by the client to render progress inline on the page
+  // that started the job, instead of navigating to /job/status.
+  router.get('/job/status.json', (req, res) => {
     const s = sumState();
-    const back = req.query.back || `${base}/summarize`;
+    res.json({ running: s.running, label: s.label, total: s.total, done: s.done, current: s.current, errors: s.errors });
+  });
+
+  router.get('/job/status', (req, res) => {
+    const s = sumState();
+    const back = req.query.back || base;
     const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
     const errs = s.errors?.length ?? 0;
+    const label = s.label || 'Working';
     const subtitle = s.running
-      ? `${s.done} of ${s.total} sessions — ${s.current || '…'}`
+      ? `${s.done} of ${s.total} — ${s.current || '…'}`
       : s.finishedAt
-        ? `${s.done} summarized · ${errs} error${errs === 1 ? '' : 's'} · finished ${s.finishedAt.slice(11, 19)}`
+        ? `${s.done} done · ${errs} error${errs === 1 ? '' : 's'} · finished ${s.finishedAt.slice(11, 19)}`
         : 'Not started.';
 
     const body = html`
       ${s.running ? raw('<meta http-equiv="refresh" content="2">') : ''}
       ${ui.pageHead({
-        title: s.running ? `✨ Summarizing… (${pct}%)` : '✨ Summarization complete',
+        title: s.running ? `✨ ${label}… (${pct}%)` : '✨ Complete',
         subtitle,
         actions: s.running ? '' : ui.btn({ href: back, label: '← Back', primary: true }),
       })}
       ${s.total ? html`<progress value="${s.done}" max="${s.total}" style="width:100%;height:6px;margin-bottom:16px"></progress>` : ''}
-      ${s.running ? html`<div class="dim" style="font-size:13px">Summarizing: ${s.current || '…'}</div>` : ''}
+      ${s.running ? html`<div class="dim" style="font-size:13px">${label}: ${s.current || '…'}</div>` : ''}
       ${errs ? html`<div class="card" style="margin-top:12px"><strong>Errors</strong><ul style="margin:8px 0 0">${s.errors.map((e) => html`<li>${e}</li>`)}</ul></div>` : ''}`;
-    res.send(shell(s.running ? 'Summarizing…' : 'Done', body, crumb));
+    res.send(shell(s.running ? label : 'Done', body, crumb));
   });
 
-  // ── Report prompt editor ───────────────────────────────────────────────────
+  // ── Summary prompt editor (daily + trend) ──────────────────────────────────
   router.get('/prompt', async (req, res) => {
     const config = await getConfig();
-    const current = config.reportPrompt || DEFAULT_REPORT_SYSTEM;
+    // Migrate the legacy single reportPrompt into dailyPrompt for editing.
+    const daily = config.dailyPrompt || config.reportPrompt || DEFAULT_DAILY_SYSTEM;
+    const trend = config.trendPrompt || DEFAULT_TREND_SYSTEM;
     const back = req.query.back || base;
     const body = html`
       ${ui.pageHead({
-        title: '✏️ Edit Report Prompt',
-        subtitle: 'System prompt used when generating executive day reports.',
+        title: '✏️ Edit Summary Prompts',
+        subtitle: 'System prompts for the daily summary and the cross-day trend.',
         actions: ui.btn({ href: back, label: '← Back' }),
       })}
       ${ui.configForm({
         action: `${base}/prompt`,
-        fields: [{ name: 'prompt', label: 'System Prompt', type: 'code', rows: 14, value: current }],
+        fields: [
+          { name: 'dailyPrompt', label: 'Daily summary prompt', type: 'text', rows: 12, value: daily, help: 'Summarizes one day from its sessions.' },
+          { name: 'trendPrompt', label: 'Trend prompt', type: 'text', rows: 10, value: trend, help: 'Summarizes themes across a week or custom range.' },
+        ],
         extra: html`<input type="hidden" name="back" value="${back}"><a class="btn" href="${back}">Cancel</a>`,
         submit: 'Save',
       })}`;
-    res.send(shell('Edit Report Prompt', body, [...crumb, { href: '#', label: 'prompt' }]));
+    res.send(shell('Edit Summary Prompts', body, [...crumb, { href: '#', label: 'prompts' }]));
   });
 
   router.post('/prompt', async (req, res) => {
-    const prompt = (req.body?.prompt || '').trim();
-    if (prompt) await saveConfig({ reportPrompt: prompt });
+    const dailyPrompt = (req.body?.dailyPrompt || '').trim();
+    const trendPrompt = (req.body?.trendPrompt || '').trim();
+    const patch = {};
+    if (dailyPrompt) patch.dailyPrompt = dailyPrompt;
+    if (trendPrompt) patch.trendPrompt = trendPrompt;
+    if (Object.keys(patch).length) await saveConfig(patch);
     res.redirect(req.body?.back || base);
   });
 
@@ -484,32 +569,41 @@ export function createFeature(ctx) {
     }
     const real = day.sessions.filter((s) => s.kind === 'interactive');
     const other = day.sessions.filter((s) => s.kind !== 'interactive');
-    const pending = real.filter((s) => !s.summary).length;
+    const summary = daySummary(day);
     const promptEditHref = `${base}/prompt?back=${encodeURIComponent(`${base}/${day.date}`)}`;
 
-    const reportSection = day.report
+    const summarySection = summary
       ? html`<div class="card" style="margin-bottom:16px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <strong>📊 Executive Report</strong>
-            <span class="dim">· ${day.reportMeta?.provider || 'llm'} · ${day.reportAt?.slice(0, 10) || ''}</span>
+            <strong>✨ Daily summary</strong>
+            <span class="dim">· ${day.summaryMeta?.provider || day.reportMeta?.provider || 'llm'} · ${(day.summaryAt || day.reportAt || '').slice(0, 10)}</span>
           </div>
-          <div style="white-space:pre-wrap;line-height:1.7;font-size:14px">${day.report}</div>
+          <div class="summary-text lg">${summary}</div>
         </div>`
-      : '';
+      : ui.empty('Not summarized yet — use Summarize below.');
 
     const body = html`
       ${ui.pageHead({
         title: `📋 ${day.date}`,
         subtitle: `${real.length} interactive · ${fmtTokens(day.tokens)} · generated ${day.generatedAt.slice(11, 16)}`,
         actions: html`
-          ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Re-repack' })}
-          ${pending ? ui.btn({ action: 'post', name: `${base}/${day.date}/summarize`, label: `✨ Summarize ${pending}`, llm: true }) : ''}
-          ${ui.btn({ action: 'post', name: `${base}/${day.date}/report`, label: day.report ? '📊 Re-generate Report' : '📊 Generate Report', llm: true })}
-          <a class="btn" href="${promptEditHref}" title="Edit report prompt" style="padding:0 10px">✏️</a>
+          ${ui.btn({
+            action: 'post',
+            name: `${base}/${day.date}/summarize${summary ? '?force=1' : ''}`,
+            label: summary ? '↻' : '✨',
+            title: summary ? 'Re-summarize' : 'Summarize',
+            llm: true,
+            status: `${base}/job/status.json`,
+          })}
+          ${ui.menu(html`
+            ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Re-repack' })}
+            ${ui.btn({ href: promptEditHref, label: '✏️ Edit prompts' })}
+          `)}
         `,
       })}
-      ${reportSection}
-      ${real.length ? real.map((s) => sessionCard(s, day.date)) : ui.empty('No interactive sessions this day.')}
+      ${summarySection}
+      <h3 class="eng-section">Sessions (${real.length})</h3>
+      ${real.length ? real.map((s) => sessionRow(s, day.date)) : ui.empty('No interactive sessions this day.')}
       ${other.length
         ? html`<h3 class="eng-section">Automated / subagent runs (${other.length})</h3>
             ${ui.table(
@@ -567,58 +661,18 @@ export function createFeature(ctx) {
     res.send(shell(`Raw · ${title}`, body, [...crumb, { href: `${base}/${date}`, label: date }, { href: '#', label: 'raw' }]));
   });
 
-  // Stage 2 — summarize all unsummarized interactive sessions for a day.
-  router.post('/:date/summarize', async (req, res) => {
+  // Summarize a single day (skips if already summarized unless ?force=1).
+  router.post('/:date/summarize', (req, res) => {
     const { date } = req.params;
-    if (!sumState().running) {
-      try {
-        const day = await store.get(date);
-        const ids = day.sessions.filter((s) => s.kind === 'interactive' && !s.summary).map((s) => s.sessionId);
-        if (ids.length) {
-          runSummarize(new Map([[date, ids]]), false).catch((e) => {
-            const s = sumState(); s.running = false; s.errors = [...(s.errors || []), `Fatal: ${e.message}`]; s.finishedAt = new Date().toISOString();
-          });
-        }
-      } catch { /* no repack for date */ }
-    }
-    res.redirect(`${base}/summarize/status?back=${encodeURIComponent(`${base}/${date}`)}`);
-  });
-
-  // Stage 2 — summarize a single session.
-  router.post('/:date/summarize/:sessionId', async (req, res) => {
-    const { date, sessionId } = req.params;
-    if (!sumState().running) {
-      runSummarize(new Map([[date, [sessionId]]]), false).catch((e) => {
-        const s = sumState(); s.running = false; s.errors = [...(s.errors || []), `Fatal: ${e.message}`]; s.finishedAt = new Date().toISOString();
-      });
-    }
-    res.redirect(`${base}/summarize/status?back=${encodeURIComponent(`${base}/${date}`)}`);
-  });
-
-  // Stage 2 — generate executive day report (single LLM call, background).
-  router.post('/:date/report', async (req, res) => {
-    const { date } = req.params;
-    res.redirect(`${base}/summarize/status?back=${encodeURIComponent(`${base}/${date}`)}`);
-    // Fire after redirect is sent — report is one call so we reuse sumState for display.
-    if (!sumState().running) {
-      Object.assign(sumState(), { running: true, total: 1, done: 0, errors: [], current: 'executive report', startedAt: new Date().toISOString(), finishedAt: null });
-      try {
-        const day = await store.get(date);
-        const config = await getConfig();
-        await summarizeDayReport(day, provider, config.reportPrompt || DEFAULT_REPORT_SYSTEM);
-        await store.save(day);
-      } catch (e) {
-        sumState().errors.push(e.message);
-      }
-      Object.assign(sumState(), { running: false, done: 1, current: null, finishedAt: new Date().toISOString() });
-    }
+    const force = !!(req.body?.force || req.query?.force);
+    summarizeDaysJob([date], force);
+    res.redirect(`${base}/job/status?back=${encodeURIComponent(`${base}/${date}`)}`);
   });
 
   // ── Components ───────────────────────────────────────────────────────────
-  function sessionCard(s, date) {
-    const summary = s.summary
-      ? html`<div class="eng-panel"><strong>✨ Summary</strong> <span class="dim">· ${s.summaryMeta?.provider || 'llm'}</span><div>${s.summary}</div></div>`
-      : '';
+  // Session list row for the day-detail page. Repack info only (no per-session
+  // summary — that's now a single day-level summary) plus a Raw JSONL drill-down.
+  function sessionRow(s, date) {
     const files = s.filesTouched.length
       ? html`<div class="meta"><strong>Files:</strong> ${s.filesTouched.slice(0, 8).join(', ')}${s.filesTouched.length > 8 ? ` +${s.filesTouched.length - 8}` : ''}</div>`
       : '';
@@ -627,14 +681,12 @@ export function createFeature(ctx) {
       : '';
     return ui.card({
       title: s.title,
-      badge: html`${s.summary ? ui.badge('summarized', 'ok') : ui.badge('raw')} ${ui.badge(fmtTokens(s.tokens))}`,
+      badge: ui.badge(fmtTokens(s.tokens)),
       desc: html`<div class="dim">${shortProject(s.project)}${s.branch ? ` · ${s.branch}` : ''} · ${s.start?.slice(11, 16)}–${s.end?.slice(11, 16)} · ${s.msgCount} msgs</div>
-        ${summary}
         ${s.prompts.length ? html`<div class="meta"><strong>Asked:</strong> ${s.prompts.slice(0, 3).join(' — ')}</div>` : ''}
         ${files}${cmds}
         ${s.outcome ? html`<div class="meta"><strong>Ended:</strong> ${s.outcome.slice(0, 200)}</div>` : ''}`,
       actions: [
-        ui.btn({ action: 'post', name: `${base}/${date}/summarize/${s.sessionId}`, label: s.summary ? '✨ Re-summarize' : '✨ Summarize', llm: true }),
         ui.btn({ href: `${base}/${date}/${s.sessionId}/raw`, label: '🔍 Raw JSONL' }),
       ],
     });
@@ -663,6 +715,19 @@ function recordPreview(r) {
   return '';
 }
 
+// Collapse whitespace-free truncation for card previews.
+function clip(s, n = 120) {
+  const str = String(s ?? '').trim();
+  return str.length > n ? str.slice(0, n).trimEnd() + '…' : str;
+}
+
+// Add `n` days to a YYYY-MM-DD string (UTC), returning YYYY-MM-DD.
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 function fmtTokens(t = { in: 0, out: 0, cache: 0 }) {
   const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
   return `${k(t.in)}↓/${k(t.out)}↑ tok${t.cache ? ` (${k(t.cache)} cache)` : ''}`;
@@ -671,4 +736,19 @@ function fmtTokens(t = { in: 0, out: 0, cache: 0 }) {
 function shortProject(p) {
   const parts = String(p).split(/[\\/]/);
   return parts.slice(-2).join('/') || p;
+}
+
+function weekStart(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const day = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return d.toISOString().slice(0, 10);
+}
+
+function weekLabel(startStr) {
+  const start = new Date(startStr + 'T00:00:00Z');
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return `${fmt(start)} – ${fmt(end)}`;
 }

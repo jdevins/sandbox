@@ -3,6 +3,7 @@ npm-debug.log*
 .env
 .DS_Store
 *.local
+.claude/
 
 # markitdown app: Python virtualenv (rebuilt by `npm run markitdown:setup`)
 apps/markitdown/service/.venv/
@@ -10,3 +11,6 @@ apps/markitdown/service/build/
 apps/markitdown/dist/
 apps/markitdown/data/runs/
 __pycache__/
+
+# repacks
+apps/claude-engine/data/repacks

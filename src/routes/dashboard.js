@@ -1,4 +1,5 @@
 import express from 'express';
+import { ghostStamp, BOOT, serverVersion } from '../lib/release.js';
 
 /**
  * Dashboard UI + management API.
@@ -22,7 +23,12 @@ export function dashboardRouter(appManager) {
   router.get('/', async (req, res) => {
     const apps = appManager.list();
     const health = await appManager.healthReport();
-    res.render('dashboard', { title: 'Sandbox', apps, health });
+    res.render('dashboard', {
+      title: 'Sandbox',
+      apps,
+      health,
+      ghost: ghostStamp({ version: serverVersion, loadedAt: BOOT }),
+    });
   });
 
   router.get('/healthz', async (req, res) => {

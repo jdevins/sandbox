@@ -2,6 +2,10 @@ import express from 'express';
 import { getLauncher } from './lib/launcher.js';
 import * as runs from './lib/runs.js';
 import { policy } from './lib/policy.js';
+import { ghostStamp } from '../../src/lib/release.js';
+
+// Module-load epoch — resets on process restart and on a dashboard Restart.
+const LOADED_AT = Date.now();
 
 export const meta = {
   name: 'MarkItDown',
@@ -638,5 +642,5 @@ $('#clear').onclick=()=>{
   $('#outs').innerHTML='<div class="empty mini">Summary appears here.</div>';
 };
 </script>
-</body></html>`;
+${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}</body></html>`;
 }

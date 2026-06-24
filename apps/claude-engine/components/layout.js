@@ -1,6 +1,17 @@
-import { html, toHtml } from '../lib/html.js';
+import { html, toHtml, raw } from '../lib/html.js';
+import { ghostStamp } from '../../../src/lib/release.js';
 
 const BASE = '/apps/claude-engine';
+
+// Build stamp state. layout.js is statically imported (so a dashboard Restart
+// re-imports index.js but not this module); index.js calls markBuild() on every
+// load to refresh the load epoch. Drives the bottom-right freshness stamp.
+let loadedAt = Date.now();
+let appVersion;
+export function markBuild(meta) {
+  loadedAt = Date.now();
+  appVersion = meta?.version;
+}
 
 // App-local page shell. Uses the SHARED theme (dark.css) for visual consistency
 // plus the engine's OWN component stylesheet — components are not shared across apps.
@@ -40,6 +51,7 @@ export function page({ title, active = '', breadcrumb = [], body }) {
     ${body}
   </main>
   <div class="toast" id="toast"></div>
+  ${raw(ghostStamp({ version: appVersion, loadedAt }))}
   <script src="${BASE}/assets/engine.js"></script>
 </body>
 </html>`);
