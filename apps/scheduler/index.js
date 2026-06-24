@@ -9,7 +9,7 @@ const LOADED_AT = Date.now();
 export const meta = {
   name: 'Scheduler',
   description: 'Manage and trigger scheduled agent jobs.',
-  version: '1.2.0',
+  version: '1.2.1',
 };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

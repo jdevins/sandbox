@@ -17,7 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const meta = {
   name: 'Claude Engine',
   description: 'Authoring & ops console for Claude: skills, agents, memories — code-first and modular.',
-  version: '0.1.0',
+  version: '0.1.1',
 };
 
 export async function createApp({ name }) {

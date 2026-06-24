@@ -10,7 +10,7 @@ const LOADED_AT = Date.now();
 export const meta = {
   name: 'MarkItDown',
   description: 'Convert PDF/Office/image files to Markdown via a Python markitdown service.',
-  version: '0.1.0',
+  version: '0.1.1',
 };
 
 export function createApp({ name }) {
