@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../../src/app.js';
 import { ghostStamp } from '../../src/lib/release.js';
+import { getSchedules, triggerNow } from '../../src/scheduler.js';
 
 // Module-load epoch — resets on process restart and on a dashboard Restart
 // (both re-import this file). Drives the bottom-right freshness stamp.
@@ -11,7 +12,7 @@ const LOADED_AT = Date.now();
 export const meta = {
   name: 'Backlog',
   description: 'Shared backlog. Items are stored in data/backlog.json.',
-  version: '2.2.0',
+  version: '2.3.0',
 };
 
 const FILE = path.join(ROOT, 'data', 'backlog.json');
@@ -120,6 +121,36 @@ function entryHeader(item, name) {
   </form>`;
 }
 
+// Agents available for manual pickup — any scheduler job named backlog-* (the
+// schedule is the single source of truth; adding a new backlog-prefixed job
+// makes it selectable here automatically).
+function backlogAgents() {
+  return getSchedules().filter((j) => j.id.startsWith('backlog-'));
+}
+
+function pickupDialog(item, name, agents) {
+  const dialogId = `pickup-${item.id}`;
+  const options = agents.map((j, idx) => `
+    <label style="display:block;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer">
+      <input type="radio" name="agent" value="${esc(j.id)}" ${idx === 0 ? 'checked' : ''} style="margin-right:8px">
+      <strong>${esc(j.name || j.id)}</strong>
+      <div style="font-size:0.8em;color:var(--text-dim);margin-top:2px;margin-left:20px">${esc(j.description || '')}</div>
+    </label>`).join('');
+
+  return `<dialog id="${dialogId}" style="background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:18px;max-width:420px;width:90%">
+    <form method="post" action="/apps/${name}/pickup">
+      <input type="hidden" name="id" value="${esc(item.id)}">
+      <h3 style="margin:0 0 4px">Pick up "${esc(item.title)}"</h3>
+      <p class="muted" style="font-size:0.8em;margin:0 0 12px">Choose an agent to run, scoped to this item.</p>
+      ${options || '<div class="empty">No backlog agents configured.</div>'}
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
+        <button type="button" class="btn" onclick="document.getElementById('${dialogId}').close()">Cancel</button>
+        <button type="submit" class="btn primary"${agents.length ? '' : ' disabled'}>Pick up</button>
+      </div>
+    </form>
+  </dialog>`;
+}
+
 function descriptionSection(item, name) {
   return `<form method="post" action="/apps/${name}/edit" style="margin-top:8px">
     <input type="hidden" name="id" value="${esc(item.id)}">
@@ -134,6 +165,7 @@ export function createApp({ name }) {
   router.get('/', (req, res) => {
     const items = read();
     const filter = req.query.status || 'all';
+    const agents = backlogAgents();
 
     const visible = filter === 'all' ? items : items.filter((i) => i.status === filter);
 
@@ -145,9 +177,11 @@ export function createApp({ name }) {
       <div class="card backlog-item" style="margin-bottom:12px">
         <div class="row spread" style="align-items:flex-start;flex-wrap:wrap;gap:10px">
           ${entryHeader(item, name)}
-          <div class="row" style="gap:6px;flex-wrap:wrap">
+          <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">
             ${statusBadge(item.status)}
             <span class="badge">${esc(item.type || '—')}</span>
+            <button type="button" class="btn" style="padding:1px 8px;font-size:0.8em"
+              onclick="document.getElementById('pickup-${esc(item.id)}').showModal()">📥 Pickup</button>
           </div>
         </div>
 
@@ -161,6 +195,7 @@ export function createApp({ name }) {
         </div>
 
         ${annotationsSection(item)}
+        ${pickupDialog(item, name, agents)}
 
         <div class="row spread" style="margin-top:12px;flex-wrap:wrap;gap:10px;align-items:center">
           <div style="font-size:0.85em">${gateCell(item, name)}</div>
@@ -271,6 +306,17 @@ export function createApp({ name }) {
       }
     }
     write(items);
+    res.redirect(`/apps/${name}/`);
+  });
+
+  // Manual pickup — runs the chosen backlog-* scheduler job once, scoped to
+  // this item via a runtime note (see triggerNow/runPrompt in src/scheduler.js).
+  router.post('/pickup', (req, res) => {
+    const { id, agent } = req.body || {};
+    const items = read();
+    const item = items.find((i) => i.id === id);
+    const job = backlogAgents().find((j) => j.id === agent);
+    if (item && job) triggerNow(job.id, { itemId: item.id, itemTitle: item.title });
     res.redirect(`/apps/${name}/`);
   });
 

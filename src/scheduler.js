@@ -106,7 +106,7 @@ function saveLog() {
   writeFile(LOG_FILE, JSON.stringify(log, null, 2), () => {});
 }
 
-function runPrompt(job) {
+function runPrompt(job, context) {
   const promptPath = path.join(ROOT, job.prompt);
   if (!existsSync(promptPath)) {
     writeRun(job.id, { status: 'error', output: `Prompt file not found: ${job.prompt}` });
@@ -119,6 +119,14 @@ function runPrompt(job) {
   } catch (e) {
     writeRun(job.id, { status: 'error', output: `Could not read prompt: ${e.message}` });
     return;
+  }
+
+  // Manual "pickup" runs (triggered from a single backlog item) append a scope
+  // note rather than editing the prompt file, so the agent narrows to one item
+  // without the schedule's prompt changing for its normal scheduled runs.
+  if (context && context.itemId) {
+    promptText += `\n\n---\n**Scoped run (manual pickup):** focus only on backlog item ` +
+      `\`${context.itemId}\`${context.itemTitle ? ` — "${context.itemTitle}"` : ''}. Ignore all other items.\n`;
   }
 
   writeRun(job.id, { status: 'running', output: null, startedAt: new Date().toISOString() });
@@ -207,11 +215,11 @@ export function startScheduler() {
   }
 }
 
-export function triggerNow(id) {
+export function triggerNow(id, context) {
   const schedules = readSchedules();
   const job = schedules.find((j) => j.id === id);
   if (!job) return { ok: false, error: 'Job not found' };
-  runPrompt(job);
+  runPrompt(job, context);
   return { ok: true };
 }
 
