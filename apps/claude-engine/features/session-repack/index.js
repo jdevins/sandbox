@@ -10,7 +10,7 @@ export const meta = {
   name: 'Session Repack',
   description: 'Daily recap of Claude work — zero-cost repack of local transcripts, with optional LLM summaries.',
   icon: '📋',
-  version: '0.4.0',
+  version: '0.4.1',
 };
 
 const today = () => localDate();
@@ -290,6 +290,7 @@ export function createFeature(ctx) {
           <button class="btn llm" type="submit" formaction="${base}/trend/week/${currentWk}" data-llm-status="${base}/job/status.json">📈 Week trend</button>
         </form>
         ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today' })}
+        ${ui.btn({ action: 'post', name: `${base}/export?all=1`, label: '📤 Export all' })}
         ${ui.btn({ href: `${base}/trends`, label: '📈 Trends' })}
         ${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}
         ${ui.btn({ href: `${base}/prompt`, label: '✏️ Prompts' })}
@@ -336,9 +337,10 @@ export function createFeature(ctx) {
   // paste it into Import there. Marking `exported` is what makes repeated runs
   // only ever ship what's new.
   router.post('/export', async (req, res) => {
+    const all = !!(req.body?.all || req.query?.all);
     const config = await getConfig();
     const label = config.sourceLabel || 'unlabeled';
-    const candidates = (await store.list()).filter((d) => Array.isArray(d.sessions) && !d.exported);
+    const candidates = (await store.list()).filter((d) => Array.isArray(d.sessions) && (all || !d.exported));
     if (!candidates.length) return res.redirect(`${base}?notice=nothing-to-export`);
 
     const exportedAt = new Date().toISOString();

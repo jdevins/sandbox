@@ -357,5 +357,19 @@ export async function buildDayRepack(date, { previous } = {}, env = process.env)
     day.summaryAt = previous.reportAt;
     day.summaryMeta = previous.reportMeta;
   }
+  // Stage 2 fields the local-summary path never touches but which previously
+  // weren't carried forward either — every re-repack (incl. the 23:55 cron and
+  // "Repack all") was silently wiping the user's merge/submit work and
+  // resetting already-exported days back to unexported. Carry them all
+  // forward, matching the contract this function already claims elsewhere.
+  if (previous?.mergedSummary) day.mergedSummary = previous.mergedSummary;
+  if (previous?.submitted) {
+    day.submitted = previous.submitted;
+    day.submittedAt = previous.submittedAt;
+  }
+  if (previous?.exported) {
+    day.exported = previous.exported;
+    day.exportedAt = previous.exportedAt;
+  }
   return day;
 }
