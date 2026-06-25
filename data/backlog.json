@@ -129,13 +129,13 @@
   },
   {
     "estimate": "L",
-    "approvedForBuild": false,
+    "approvedForBuild": true,
     "claim": null,
     "id": "mq6plw02",
     "title": "App — Mermaid Diagrams",
     "description": "Diagram creator app. Utility to create, save, and edit Mermaid syntax from either form data or a prompt. Supported types: sequence diagram, flow chart, swimlanes, pie chart, bar graph, plus others TBD. For well-known types the user does NOT supply raw Mermaid syntax — the form/prompt generates it. User may also paste raw Mermaid syntax directly when needed.",
     "type": "feature",
-    "status": "on-hold",
+    "status": "ready",
     "addedBy": "jdevins",
     "createdAt": "2026-06-22T00:00:00.000Z",
     "annotations": []

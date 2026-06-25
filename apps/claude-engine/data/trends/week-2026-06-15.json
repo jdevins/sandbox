@@ -1,0 +1,21 @@
+{
+  "id": "week:2026-06-15",
+  "createdAt": "2026-06-25T02:47:03.747Z",
+  "kind": "week",
+  "start": "2026-06-15",
+  "end": "2026-06-21",
+  "days": [
+    "2026-06-16",
+    "2026-06-17",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-21"
+  ],
+  "summary": "**Theme: building the substrate for an AI-first operating model, not just using AI**\n\nThe week's through-line is infrastructure-before-features: almost every session is about making AI participation in the workflow *cheap, governed, and self-correcting* rather than ad-hoc. The cost-aware pipeline (zero-LLM extraction + optional summarization), the lightweight CLI-triggered pattern over a paid API, and the exe+browser packaging decision all share one instinct — default to the cheapest mechanism that works, reserve the model call for where it actually adds judgment. That's the economic core of an AI-first org: agents and automation get budgeted like any other resource, not bolted on by default.\n\nThe second strand is making agentic behavior legible and self-policing: the Agent Fit Framework lessons, the live \"try it\" panel against real guard logic, the self-healing groomer states (ready-to-groom / groomer-blocked), and the convention-deviation rule codified into memory are all the same move — encode the judgment once, so future sessions (yours or the agent's) don't re-derive it from scratch. This is the \"memory and standards as infrastructure\" pattern: institutional knowledge moves out of your head and into files/hooks that enforce themselves, which is exactly what scales an individual's practice into something org-shaped.\n\nThe third strand is orchestration discipline: Build-Test-Iterate-Done with an independent critic, explicit gates (backend/API/UI/data) instead of a collapsed \"build\" step, and the late-week retro on cutting rework by sketching the model visually before iterating. Combined with the permission-allowlist tuning (turning your own tool-call history into reduced future friction), the pattern is: every loop — technical, scheduling, or permissions — gets observed once and then formalized so it runs with less supervision next time. That's the throughline tying this week to the future state: less reacting to each session, more compounding the scaffolding (cost discipline, encoded judgment, gated orchestration) so the system gets more autonomous and more reviewable at the same time.",
+  "generatedAt": "2026-06-25T02:47:03.746Z",
+  "meta": {
+    "provider": "cli",
+    "model": "claude",
+    "usage": {}
+  }
+}

@@ -58,10 +58,10 @@
   },
   "backlog-groom": {
     "status": "ok",
-    "output": "**Run complete — 2026-06-18T22:00 UTC.** Groomed 3/3 pending items, all now `groomed`.\n\n- **A full loop** (L) — too vague to scope; recommend kill unless rewritten with a concrete target use case.\n- **Agent - 12thMan** (M) — sound critic-agent idea, but recommend sequencing it after a real multi-agent pipeline exists for it to critique.\n- **Brainstorm** (S) — references an \"agent simulator feature\" that doesn't exist anywhere in this repo; recommend kill or fold into the simulator's actual build task.\n\nCommon thread: all three reference features/agents that don't exist yet in the codebase — none are ready to build as written.\n",
-    "startedAt": "2026-06-18T22:00:00.051Z",
-    "lastRun": "2026-06-18T22:00:43.872Z",
-    "finishedAt": "2026-06-18T22:00:43.872Z",
+    "output": "Item `mq6plw02` (\"App — Mermaid Diagrams\") has status **`on-hold`**, not `ready-to-groom`. Per the groomer's gating rule, I only act on `ready-to-groom` items. No diagram/mermaid app exists yet under `apps/` to correlate against either way.\n\n**Result:** 0 groomed, 0 blocked. Skipped — item is not in `ready-to-groom` state (currently `on-hold`); no annotation or groom-block action taken.\n\nRun: 2026-06-24\n",
+    "startedAt": "2026-06-25T03:54:37.155Z",
+    "lastRun": "2026-06-25T03:54:59.166Z",
+    "finishedAt": "2026-06-25T03:54:59.166Z",
     "history": [
       {
         "ts": "2026-06-18T16:00:24.014Z",
@@ -86,7 +86,17 @@
         "status": "ok",
         "ms": 43821,
         "summary": "**Run complete — 2026-06-18T22:00 UTC.** Groomed 3/3 pending items, all now `gro"
+      },
+      {
+        "ts": "2026-06-25T03:54:59.166Z",
+        "status": "ok",
+        "ms": 22011,
+        "summary": "Item `mq6plw02` (\"App — Mermaid Diagrams\") has status **`on-hold`**, not `ready-"
       }
-    ]
+    ],
+    "context": {
+      "itemId": "mq6plw02",
+      "itemTitle": "App — Mermaid Diagrams"
+    }
   }
 }
