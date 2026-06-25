@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../../src/app.js';
 import { ghostStamp } from '../../src/lib/release.js';
-import { getSchedules, triggerNow } from '../../src/scheduler.js';
+import { getSchedules, triggerNow, getLog } from '../../src/scheduler.js';
 
 // Module-load epoch — resets on process restart and on a dashboard Restart
 // (both re-import this file). Drives the bottom-right freshness stamp.
@@ -12,7 +12,7 @@ const LOADED_AT = Date.now();
 export const meta = {
   name: 'Backlog',
   description: 'Shared backlog. Items are stored in data/backlog.json.',
-  version: '2.3.0',
+  version: '2.4.0',
 };
 
 const FILE = path.join(ROOT, 'data', 'backlog.json');
@@ -138,17 +138,23 @@ function pickupDialog(item, name, agents) {
     </label>`).join('');
 
   return `<dialog id="${dialogId}" style="background:var(--bg-elev);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:18px;max-width:420px;width:90%">
-    <form method="post" action="/apps/${name}/pickup">
+    <form method="post" action="/apps/${name}/pickup" class="pickup-form" data-status-url="/apps/${name}/api/pickup-status">
       <input type="hidden" name="id" value="${esc(item.id)}">
       <h3 style="margin:0 0 4px">Pick up "${esc(item.title)}"</h3>
-      <p class="muted" style="font-size:0.8em;margin:0 0 12px">Choose an agent to run, scoped to this item.</p>
+      <p class="muted" style="font-size:0.8em;margin:0 0 12px">Choose an agent to run, scoped to this item. This calls the LLM — it takes a while.</p>
       ${options || '<div class="empty">No backlog agents configured.</div>'}
       <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
         <button type="button" class="btn" onclick="document.getElementById('${dialogId}').close()">Cancel</button>
-        <button type="submit" class="btn primary"${agents.length ? '' : ' disabled'}>Pick up</button>
+        <button type="submit" class="btn llm"${agents.length ? '' : ' disabled'}>🤖 Pick up</button>
       </div>
     </form>
   </dialog>`;
+}
+
+// Visible while a pickup run is in flight or just finished for this item —
+// the only signal the user gets that an LLM call is happening (no silent waits).
+function pickupStatus(item) {
+  return `<div id="pickup-status-${esc(item.id)}" class="pickup-status" hidden></div>`;
 }
 
 function descriptionSection(item, name) {
@@ -185,6 +191,7 @@ export function createApp({ name }) {
           </div>
         </div>
 
+        ${pickupStatus(item)}
         ${descriptionSection(item, name)}
 
         <div class="row" style="font-size:0.78em;color:var(--muted);margin-top:8px;gap:14px;flex-wrap:wrap">
@@ -212,6 +219,15 @@ export function createApp({ name }) {
     res.type('html').send(`<!doctype html><html data-theme="dark"><head>
       <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>Backlog</title><link rel="stylesheet" href="/static/css/dark.css">
+      <style>
+        .pickup-status { margin-top:8px; padding:6px 10px; border-radius:6px; font-size:0.82em; display:flex; align-items:center; gap:8px; }
+        .pickup-status.running { background:var(--llm-dim); border:1px solid var(--llm); }
+        .pickup-status.done { background:var(--bg-elev-2); border:1px solid var(--green,#4caf50); }
+        .pickup-status.error { background:var(--bg-elev-2); border:1px solid var(--red,#f44336); }
+        .pickup-spinner { width:11px; height:11px; border-radius:50%; flex:none;
+          border:2px solid var(--llm); border-top-color:transparent; animation:pickup-spin .7s linear infinite; }
+        @keyframes pickup-spin { to { transform:rotate(360deg); } }
+      </style>
     </head><body><div class="wrap">
       <header class="site"><h1>📋 Backlog</h1><a class="muted" href="/">← Dashboard</a></header>
 
@@ -242,7 +258,59 @@ export function createApp({ name }) {
         <strong>on-hold</strong>: paused by a human, outside the active pipeline.
         Full definitions: <a href="/apps/${name}/api/status-definitions">/api/status-definitions</a>.
       </p>
-    </div>${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}</body></html>`);
+    </div>
+    <script>
+      document.addEventListener('submit', (e) => {
+        const form = e.target;
+        if (!form.classList.contains('pickup-form')) return;
+        e.preventDefault();
+
+        const itemId = form.querySelector('input[name=id]').value;
+        const checked = form.querySelector('input[name=agent]:checked');
+        const agentLabel = checked ? checked.closest('label').querySelector('strong').textContent : 'Agent';
+        const statusUrl = form.dataset.statusUrl + '?item=' + encodeURIComponent(itemId);
+        const statusEl = document.getElementById('pickup-status-' + itemId);
+        const submitBtn = form.querySelector('button[type=submit]');
+        const dialog = form.closest('dialog');
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = '⏳ Starting…';
+        statusEl.hidden = false;
+        statusEl.className = 'pickup-status running';
+        statusEl.innerHTML = '<span class="pickup-spinner"></span><span>🤖 ' + agentLabel + ' is working on this item…</span>';
+
+        fetch(form.action, { method: 'POST', body: new URLSearchParams(new FormData(form)) })
+          .then(() => { if (dialog) dialog.close(); poll(); })
+          .catch(() => {
+            statusEl.className = 'pickup-status error';
+            statusEl.textContent = '⚠ Failed to start the run.';
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🤖 Pick up';
+          });
+
+        function poll() {
+          fetch(statusUrl).then((r) => r.json()).then((s) => {
+            if (s.running) {
+              statusEl.innerHTML = '<span class="pickup-spinner"></span><span>🤖 ' + (s.jobName || agentLabel) + ' is working on this item…</span>';
+              setTimeout(poll, 1500);
+            } else if (s.status) {
+              const ok = s.status === 'ok';
+              statusEl.className = 'pickup-status ' + (ok ? 'done' : 'error');
+              statusEl.textContent = (ok ? '✓ ' : '⚠ ') + (s.output || '').slice(0, 240);
+              submitBtn.disabled = false;
+              submitBtn.textContent = '🤖 Pick up';
+              setTimeout(() => location.reload(), ok ? 1800 : 3500);
+            } else {
+              statusEl.className = 'pickup-status error';
+              statusEl.textContent = '⚠ No run recorded for this item.';
+              submitBtn.disabled = false;
+              submitBtn.textContent = '🤖 Pick up';
+            }
+          }).catch(() => setTimeout(poll, 2000));
+        }
+      });
+    </script>
+    ${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}</body></html>`);
   });
 
   router.post('/add', (req, res) => {
@@ -318,6 +386,27 @@ export function createApp({ name }) {
     const job = backlogAgents().find((j) => j.id === agent);
     if (item && job) triggerNow(job.id, { itemId: item.id, itemTitle: item.title });
     res.redirect(`/apps/${name}/`);
+  });
+
+  // Polled by the pickup status indicator (client script above) so a manual
+  // run is never a silent wait — finds whichever backlog-* job's log entry is
+  // currently scoped to this item (see context in src/scheduler.js).
+  router.get('/api/pickup-status', (req, res) => {
+    const itemId = req.query.item;
+    const log = getLog();
+    for (const job of backlogAgents()) {
+      const entry = log[job.id];
+      if (entry && entry.context && entry.context.itemId === itemId) {
+        return res.json({
+          running: entry.status === 'running',
+          status: entry.status,
+          job: job.id,
+          jobName: job.name || job.id,
+          output: entry.output,
+        });
+      }
+    }
+    res.json({ running: false });
   });
 
   // ── Agent API ──────────────────────────────────────────────────────────────

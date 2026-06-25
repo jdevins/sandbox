@@ -129,7 +129,10 @@ function runPrompt(job, context) {
       `\`${context.itemId}\`${context.itemTitle ? ` — "${context.itemTitle}"` : ''}. Ignore all other items.\n`;
   }
 
-  writeRun(job.id, { status: 'running', output: null, startedAt: new Date().toISOString() });
+  // context is sticky across this run's writeRun calls (start/finish merge over
+  // the previous entry) so a status poll mid-run can tell which item it's for;
+  // explicitly null it out here so a later unscoped run doesn't inherit it.
+  writeRun(job.id, { status: 'running', output: null, startedAt: new Date().toISOString(), context: context || null });
 
   // claude -p reads the prompt from stdin; piping it in avoids arg-quoting issues.
   // Scheduled runs are headless — no one can approve a permission prompt — so we
