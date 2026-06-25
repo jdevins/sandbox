@@ -10,11 +10,13 @@ export const meta = {
   name: 'Session Repack',
   description: 'Daily recap of Claude work — zero-cost repack of local transcripts, with optional LLM summaries.',
   icon: '📋',
-  version: '0.3.0',
+  version: '0.4.0',
 };
 
 const today = () => localDate();
 const KIND_BADGE = { interactive: 'ok', automated: '', subagent: 'warn' };
+const LOCAL_ICON = '💻';
+const IMPORT_ICON = '📥';
 
 export function createFeature(ctx) {
   const { ui, page, provider, base, paths } = ctx;
@@ -171,15 +173,35 @@ export function createFeature(ctx) {
 
   // ── Library: all repacked days, grouped by week ────────────────────────────
   router.get('/', async (req, res) => {
-    const allDays = (await store.list())
-      .filter((d) => Array.isArray(d.sessions))
-      .sort((a, b) => b.date.localeCompare(a.date));
-    const pendingExport = allDays.filter((d) => !d.exported).length;
+    const localDays = (await store.list()).filter((d) => Array.isArray(d.sessions));
+    const imports = await importStore.list().catch(() => []);
+    const importsByDate = new Map();
+    for (const i of imports) {
+      if (!importsByDate.has(i.date)) importsByDate.set(i.date, []);
+      importsByDate.get(i.date).push(i);
+    }
+
+    // Days that only exist as an import (never repacked on this machine) are
+    // invisible if we only iterate the local store — synthesize a placeholder
+    // so they still show up, clearly marked as import-only, instead of silently
+    // disappearing or getting folded into a "local" card that misrepresents them.
+    const knownDates = new Set(localDays.map((d) => d.date));
+    const importOnlyDays = [...importsByDate.keys()]
+      .filter((date) => !knownDates.has(date))
+      .map((date) => ({ id: date, date, sessions: [], counts: {}, tokens: { in: 0, out: 0, cache: 0 }, importOnly: true }));
+
+    const allDays = [...localDays, ...importOnlyDays].sort((a, b) => b.date.localeCompare(a.date));
+    const pendingExport = localDays.filter((d) => !d.exported).length;
 
     const statusFilter = req.query.status || 'all'; // all | submitted | pending
-    const days = statusFilter === 'all'
+    const sourceFilter = req.query.source || 'all'; // all | local | imported
+    const qs = (overrides) => `${base}?${new URLSearchParams({ status: statusFilter, source: sourceFilter, ...overrides })}`;
+
+    let days = statusFilter === 'all'
       ? allDays
       : allDays.filter((d) => (statusFilter === 'submitted' ? d.submitted : !d.submitted));
+    if (sourceFilter === 'local') days = days.filter((d) => d.sessions.length > 0);
+    else if (sourceFilter === 'imported') days = days.filter((d) => importsByDate.has(d.date));
 
     const trends = await trendStore.list().catch(() => []);
     const weekTrend = new Map(trends.filter((t) => t.kind === 'week').map((t) => [t.start, t]));
@@ -195,29 +217,38 @@ export function createFeature(ctx) {
     const sections = [...byWeek.entries()].map(([wk, wDays]) => {
       const isCurrentWeek = wk === currentWk;
       const cards = wDays.map((d) => {
+        const dayImports = importsByDate.get(d.date) || [];
+        const hasLocal = d.sessions.length > 0;
         const real = d.sessions.filter((s) => s.kind === 'interactive');
         const summary = daySummary(d);
+        const sourceBadge = !hasLocal && dayImports.length
+          ? ui.badge(`${IMPORT_ICON} import-only`, 'warn')
+          : dayImports.length
+            ? ui.badge(`${IMPORT_ICON} +imported`)
+            : '';
         return ui.card({
           title: d.date,
           // Summarized day → green check; otherwise the session count.
           badge: html`${summary
             ? ui.badge('summarized', 'ok')
-            : ui.badge(`${real.length} session${real.length === 1 ? '' : 's'}`)}${d.submitted ? ` ${ui.badge('submitted', 'ok')}` : ''}`,
+            : ui.badge(`${real.length} session${real.length === 1 ? '' : 's'}`)}${sourceBadge}${d.submitted ? ` ${ui.badge('submitted', 'ok')}` : ''}`,
           // Summary replaces the repack info once present.
           desc: summary
-            ? html`<div class="summary-text">${clip(summary, 280)}</div>`
-            : real.map((s) => s.title).slice(0, 4).join(' · ') || 'No interactive sessions',
+            ? html`<div class="summary-text">${clip(stripMd(summary), 280)}</div>`
+            : hasLocal
+              ? (real.map((s) => s.title).slice(0, 4).join(' · ') || 'No interactive sessions')
+              : `No local activity — ${dayImports.length} import${dayImports.length === 1 ? '' : 's'} from ${[...new Set(dayImports.map((i) => i.label))].join(', ')}`,
           meta: summary ? '' : html`${fmtTokens(d.tokens)} · ${d.counts.automated || 0} automated`,
           actions: [
             ui.btn({ href: `${base}/${d.date}`, label: 'Open', primary: true }),
-            ui.btn({
+            ...(hasLocal ? [ui.btn({
               action: 'post',
               name: `${base}/${d.date}/summarize${summary ? '?force=1' : ''}`,
               label: summary ? '↻' : '✨',
               title: summary ? 'Re-summarize' : 'Summarize',
               llm: true,
               status: `${base}/job/status.json`,
-            }),
+            })] : []),
           ],
         });
       });
@@ -230,13 +261,16 @@ export function createFeature(ctx) {
         llm: true,
         status: `${base}/job/status.json`,
       });
+      const trendDeleteBtn = trend
+        ? ui.btn({ action: 'delete', name: `${base}/trend/${encodeURIComponent(trend.id)}/delete?back=${encodeURIComponent(base)}`, label: '🗑', title: 'Delete week trend', danger: true })
+        : '';
       const trendPanel = trend
-        ? html`<div class="eng-panel" style="margin-bottom:12px"><strong>📈 Week trend</strong> <span class="dim">· ${trend.meta?.provider || 'llm'}</span><div class="summary-text" style="margin-top:6px">${trend.summary}</div></div>`
+        ? html`<div class="eng-panel" style="margin-bottom:12px"><strong>📈 Week trend</strong> <span class="dim">· ${trend.meta?.provider || 'llm'}</span><div class="summary-text" style="margin-top:6px">${stripMd(trend.summary)}</div></div>`
         : '';
       return html`<details class="collapsible" style="margin-bottom:14px" ${isCurrentWeek ? 'open' : ''}>
         <summary>${weekLabel(wk)} <span class="coll-count">(${wDays.length} day${wDays.length === 1 ? '' : 's'} · ${totalSessions} session${totalSessions === 1 ? '' : 's'})</span>${trend ? html` ${ui.badge('trend', 'ok')}` : ''}</summary>
         <div class="coll-body">
-          <div class="row" style="margin-bottom:12px">${trendBtn}</div>
+          <div class="row" style="margin-bottom:12px">${trendBtn}${trendDeleteBtn}</div>
           ${trendPanel}
           ${ui.grid(cards)}
         </div>
@@ -262,9 +296,15 @@ export function createFeature(ctx) {
         ${ui.btn({ action: 'post', name: `${base}/repack-all`, label: '🔁 Repack all' })}
       `)}`;
 
-    const statusChip = (label, val) => ui.btn({ href: `${base}?status=${val}`, label, primary: statusFilter === val });
-    const statusFilters = html`<div class="row" style="gap:6px;margin-bottom:12px">
+    const statusChip = (label, val) => ui.btn({ href: qs({ status: val }), label, primary: statusFilter === val });
+    const statusFilters = html`<div class="row" style="gap:6px;margin-bottom:8px">
       ${statusChip('All', 'all')} ${statusChip('Submitted', 'submitted')} ${statusChip('Pending', 'pending')}
+    </div>`;
+
+    const sourceChip = (label, val) => ui.btn({ href: qs({ source: val }), label, primary: sourceFilter === val });
+    const sourceFilters = html`<div class="row" style="gap:6px;margin-bottom:12px">
+      <span class="dim" style="line-height:28px;font-size:12px">Source:</span>
+      ${sourceChip('All', 'all')} ${sourceChip(`${LOCAL_ICON} Local`, 'local')} ${sourceChip(`${IMPORT_ICON} Imported`, 'imported')}
     </div>`;
 
     const notice = req.query.notice === 'nothing-to-export'
@@ -280,6 +320,7 @@ export function createFeature(ctx) {
       <div class="meta">Provider for summaries: <strong>${provider.name}</strong></div>
       ${notice}
       ${statusFilters}
+      ${sourceFilters}
       ${sections.length ? sections : ui.empty('No repacks yet — run “Repack today”.')}`;
     res.send(shell('Repacks', body));
   });
@@ -559,6 +600,11 @@ export function createFeature(ctx) {
     res.redirect(`${base}/job/status?back=${encodeURIComponent(`${base}/trends`)}`);
   });
 
+  router.post('/trend/:id/delete', async (req, res) => {
+    await trendStore.remove(req.params.id);
+    res.redirect(req.query.back || `${base}/trends`);
+  });
+
   // ── Trends page: saved trends + custom-range runner ────────────────────────
   router.get('/trends', async (req, res) => {
     const trends = (await trendStore.list().catch(() => []))
@@ -568,7 +614,7 @@ export function createFeature(ctx) {
       ui.card({
         title: t.kind === 'week' ? `Week of ${t.start}` : `${t.start} → ${t.end}`,
         badge: ui.badge(t.kind, t.kind === 'week' ? 'ok' : ''),
-        desc: html`<div class="summary-text">${clip(t.summary, 320)}</div>`,
+        desc: html`<div class="summary-text">${clip(stripMd(t.summary), 320)}</div>`,
         meta: html`${t.days?.length || 0} days · ${t.meta?.provider || 'llm'} · ${t.generatedAt?.slice(0, 10) || ''}`,
         actions: [
           ui.btn({
@@ -579,6 +625,12 @@ export function createFeature(ctx) {
             label: '↻ Re-run',
             llm: true,
             status: `${base}/job/status.json`,
+          }),
+          ui.btn({
+            action: 'delete',
+            name: `${base}/trend/${encodeURIComponent(t.id)}/delete?back=${encodeURIComponent(`${base}/trends`)}`,
+            label: '🗑 Delete',
+            danger: true,
           }),
         ],
       }),
@@ -684,77 +736,96 @@ export function createFeature(ctx) {
 
   // ── Day detail ─────────────────────────────────────────────────────────────
   router.get('/:date', async (req, res) => {
+    const { date } = req.params;
     let day;
     try {
-      day = await store.get(req.params.date);
+      day = await store.get(date);
     } catch {
-      return res.send(shell('Missing', ui.empty(`No repack for ${req.params.date} — run “Repack today”.`)));
+      day = null;
     }
-    const imports = (await importStore.list().catch(() => [])).filter((i) => i.date === day.date);
+    const imports = (await importStore.list().catch(() => [])).filter((i) => i.date === date);
+    // A day with no local repack but at least one import still gets a page —
+    // it just has nothing in the Local group. Only a date with neither is missing.
+    if (!day && !imports.length) {
+      return res.send(shell('Missing', ui.empty(`No repack for ${date} — run “Repack today”.`)));
+    }
+    if (!day) day = { id: date, date, sessions: [], generatedAt: null, tokens: undefined };
 
-    // Imported sessions count toward this page's stats/list like local ones,
-    // but they're tagged so the UI and the "Raw JSONL" link can tell them apart.
+    // Local and imported sessions are kept in separate groups end-to-end — never
+    // merged into one undifferentiated list — so a day with imports but no local
+    // activity can never read as if those sessions were local.
     const sourceFilter = req.query.source || 'all'; // all | local | imported
+    const showLocal = sourceFilter !== 'imported';
+    const showImported = sourceFilter !== 'local';
     const localSessions = day.sessions.map((s) => ({ ...s, source: 'local' }));
     const importedSessions = imports.flatMap((imp) =>
       (imp.repack?.sessions || []).map((s) => ({ ...s, source: 'imported', sourceLabel: imp.label })),
     );
-    const allSessions = sourceFilter === 'local' ? localSessions
-      : sourceFilter === 'imported' ? importedSessions
-      : [...localSessions, ...importedSessions];
-    const real = allSessions.filter((s) => s.kind === 'interactive');
-    const other = allSessions.filter((s) => s.kind !== 'interactive');
+    const localReal = localSessions.filter((s) => s.kind === 'interactive');
+    const localOther = localSessions.filter((s) => s.kind !== 'interactive');
+    const importedReal = importedSessions.filter((s) => s.kind === 'interactive');
+    const importedOther = importedSessions.filter((s) => s.kind !== 'interactive');
+    const totalReal = localReal.length + importedReal.length;
 
     const summary = daySummary(day);
-    const promptEditHref = `${base}/prompt?back=${encodeURIComponent(`${base}/${day.date}`)}`;
+    const promptEditHref = `${base}/prompt?back=${encodeURIComponent(`${base}/${date}`)}`;
 
-    const sourceChip = (label, val) => ui.btn({ href: `${base}/${day.date}?source=${val}`, label, primary: sourceFilter === val });
+    const sourceChip = (label, val) => ui.btn({ href: `${base}/${date}?source=${val}`, label, primary: sourceFilter === val });
     const sourceFilters = imports.length
-      ? html`<div class="row" style="gap:6px;margin-bottom:12px">${sourceChip('All', 'all')} ${sourceChip('Local', 'local')} ${sourceChip('Imported', 'imported')}</div>`
+      ? html`<div class="row" style="gap:6px;margin-bottom:12px">${sourceChip('All', 'all')} ${sourceChip(`${LOCAL_ICON} Local`, 'local')} ${sourceChip(`${IMPORT_ICON} Imported`, 'imported')}</div>`
       : '';
 
     const importCards = imports.map((imp) => {
       const impSummary = daySummary(imp.repack);
       return html`<div class="card" style="margin-bottom:12px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <strong>📥 Imported · ${imp.label}</strong>
+          <strong>${IMPORT_ICON} Imported · ${imp.label}</strong>
           <span class="dim">· ${(imp.importedAt || '').slice(0, 10)}</span>
         </div>
-        ${impSummary ? html`<div class="summary-text">${impSummary}</div>` : ui.empty('No summary in this import.')}
+        ${impSummary ? html`<div class="summary-text">${stripMd(impSummary)}</div>` : ui.empty('No summary in this import.')}
       </div>`;
     });
 
     const summarySection = html`
       <div class="card" style="margin-bottom:16px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-          <strong>✨ Local summary</strong>
+          <strong>${LOCAL_ICON} Local summary</strong>
+          ${localSessions.length === 0 ? ui.badge('no local activity', 'warn') : ''}
           <span class="dim">· ${day.summaryMeta?.provider || day.reportMeta?.provider || 'llm'} · ${(day.summaryAt || day.reportAt || '').slice(0, 10)}</span>
         </div>
-        ${summary ? html`<div class="summary-text lg">${summary}</div>` : ui.empty('Not summarized yet — use Summarize below.')}
+        ${summary ? html`<div class="summary-text lg">${stripMd(summary)}</div>` : ui.empty('Not summarized yet — use Summarize below.')}
       </div>
       ${importCards}
       ${imports.length
         ? html`<div class="row" style="gap:8px;margin-bottom:16px;align-items:center">
-            ${ui.btn({ href: `${base}/${day.date}/merge`, label: day.submitted ? '🔀 Edit merged summary' : '🔀 Merge summaries', primary: !day.submitted })}
+            ${ui.btn({ href: `${base}/${date}/merge`, label: day.submitted ? '🔀 Edit merged summary' : '🔀 Merge summaries', primary: !day.submitted })}
             ${day.submitted ? ui.badge('submitted', 'ok') : ''}
           </div>`
         : ''}`;
 
+    const otherTable = (rows, label) => rows.length
+      ? html`<h3 class="eng-section">${label} (${rows.length})</h3>
+          ${ui.table(
+            ['Kind', 'Title', 'Time', 'Msgs'],
+            rows.map((s) => [s.kind, s.title, s.start?.slice(11, 16) || '', String(s.msgCount)]),
+          )}`
+      : '';
+
     const body = html`
       ${ui.pageHead({
-        title: `📋 ${day.date}`,
-        subtitle: `${real.length} interactive · ${fmtTokens(day.tokens)}` +
+        title: `📋 ${date}`,
+        subtitle: `${totalReal} interactive · ${fmtTokens(day.tokens)}` +
           (day.firstChatAt ? ` · ${day.firstChatAt.slice(11, 16)}–${day.lastChatAt.slice(11, 16)} (${formatDuration(day.activeMs)} active)` : '') +
-          ` · generated ${day.generatedAt.slice(11, 16)}`,
+          (day.generatedAt ? ` · generated ${day.generatedAt.slice(11, 16)}` : ''),
         actions: html`
-          ${ui.btn({
+          ${localSessions.length || !imports.length ? ui.btn({
             action: 'post',
-            name: `${base}/${day.date}/summarize${summary ? '?force=1' : ''}`,
+            name: `${base}/${date}/summarize${summary ? '?force=1' : ''}`,
             label: summary ? '↻' : '✨',
             title: summary ? 'Re-summarize' : 'Summarize',
             llm: true,
             status: `${base}/job/status.json`,
-          })}
+          }) : ''}
           ${ui.menu(html`
             ${ui.btn({ href: promptEditHref, label: '✏️ Edit prompts' })}
           `)}
@@ -762,16 +833,13 @@ export function createFeature(ctx) {
       })}
       ${summarySection}
       ${sourceFilters}
-      <h3 class="eng-section">Sessions (${real.length})</h3>
-      ${real.length ? real.map((s) => sessionRow(s, day.date)) : ui.empty('No interactive sessions this day.')}
-      ${other.length
-        ? html`<h3 class="eng-section">Automated / subagent runs (${other.length})</h3>
-            ${ui.table(
-              ['Kind', 'Title', 'Time', 'Msgs'],
-              other.map((s) => [s.kind, s.title, s.start?.slice(11, 16) || '', String(s.msgCount)]),
-            )}`
-        : ''}`;
-    res.send(shell(day.date, body, [...crumb, { href: `${base}/${day.date}`, label: day.date }]));
+      ${showLocal ? html`<h3 class="eng-section">${LOCAL_ICON} Local sessions (${localReal.length})</h3>
+        ${localReal.length ? localReal.map((s) => sessionRow(s, date)) : ui.empty('No local sessions this day.')}` : ''}
+      ${showImported ? html`<h3 class="eng-section">${IMPORT_ICON} Imported sessions (${importedReal.length})</h3>
+        ${importedReal.length ? importedReal.map((s) => sessionRow(s, date)) : ui.empty('No imported sessions this day.')}` : ''}
+      ${showLocal ? otherTable(localOther, `${LOCAL_ICON} Local automated / subagent runs`) : ''}
+      ${showImported ? otherTable(importedOther, `${IMPORT_ICON} Imported automated / subagent runs`) : ''}`;
+    res.send(shell(date, body, [...crumb, { href: `${base}/${date}`, label: date }]));
   });
 
   // ── Merge: blend the local summary with imported summaries by hand ─────────
@@ -889,7 +957,7 @@ export function createFeature(ctx) {
       : '';
     return ui.card({
       title: s.title,
-      badge: html`${ui.badge(fmtTokens(s.tokens))}${s.source === 'imported' ? ui.badge(`📥 ${s.sourceLabel}`) : ''}`,
+      badge: html`${ui.badge(fmtTokens(s.tokens))}${s.source === 'imported' ? ui.badge(`${IMPORT_ICON} ${s.sourceLabel}`) : ui.badge(LOCAL_ICON)}`,
       desc: html`<div class="dim">${shortProject(s.project)}${s.branch ? ` · ${s.branch}` : ''} · ${s.start?.slice(11, 16)}–${s.end?.slice(11, 16)} · ${s.msgCount} msgs</div>
         ${s.prompts.length ? html`<div class="meta"><strong>Asked:</strong> ${s.prompts.slice(0, 3).join(' — ')}</div>` : ''}
         ${files}${cmds}
@@ -927,6 +995,17 @@ function recordPreview(r) {
 function clip(s, n = 120) {
   const str = String(s ?? '').trim();
   return str.length > n ? str.slice(0, n).trimEnd() + '…' : str;
+}
+
+// Strip markdown emphasis/headers the model sometimes emits even when told not
+// to — this app never renders markdown, so leftover **/_/# markers show up as
+// literal punctuation in .summary-text blocks instead of formatting.
+function stripMd(s) {
+  return String(s ?? '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1');
 }
 
 // Add `n` days to a YYYY-MM-DD string (UTC), returning YYYY-MM-DD.

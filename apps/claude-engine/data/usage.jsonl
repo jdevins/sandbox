@@ -8,3 +8,13 @@
 {"ts":"2026-06-24T17:56:56.824Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":1}
 {"ts":"2026-06-24T17:56:56.864Z","kind":"llm","id":"mock","calledBy":{"kind":"agent","id":"summarizer","owner":"claude-engine"},"ok":true,"ms":0}
 {"ts":"2026-06-24T17:56:56.867Z","kind":"agent","id":"summarizer","owner":"claude-engine","ok":true,"ms":3}
+{"ts":"2026-06-25T14:36:50.721Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-25T14:36:50.722Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-25T14:36:50.725Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":1}
+{"ts":"2026-06-25T14:36:50.764Z","kind":"llm","id":"mock","calledBy":{"kind":"agent","id":"summarizer","owner":"claude-engine"},"ok":true,"ms":0}
+{"ts":"2026-06-25T14:36:50.765Z","kind":"agent","id":"summarizer","owner":"claude-engine","ok":true,"ms":1}
+{"ts":"2026-06-25T14:38:52.617Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-25T14:38:52.620Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":0}
+{"ts":"2026-06-25T14:38:52.624Z","kind":"skill","id":"check-standards","owner":"claude-engine","ok":true,"ms":2}
+{"ts":"2026-06-25T14:38:52.656Z","kind":"llm","id":"mock","calledBy":{"kind":"agent","id":"summarizer","owner":"claude-engine"},"ok":true,"ms":0}
+{"ts":"2026-06-25T14:38:52.660Z","kind":"agent","id":"summarizer","owner":"claude-engine","ok":true,"ms":4}

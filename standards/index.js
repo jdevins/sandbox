@@ -218,7 +218,7 @@ const ui = [
     id: 'ui-text-wraps-code-scrolls',
     category: 'ui',
     level: 'warning',
-    status: 'proposed',
+    status: 'active',
     origin: 'rework',
     description: 'Prose text (descriptions, summaries, prompt fields) always wraps within its container — use .summary-text for LLM summary blocks, plain textarea (type "text") for prose entry fields. Only literal code/data blocks (raw JSON, transcripts) may overflow horizontally to scroll — use .eng-source or textarea.code. Found while cleaning up session-repack cards, which had ad-hoc inline white-space styles and a prose prompt field mistakenly typed as code (forced no-wrap + horizontal scroll).',
   },

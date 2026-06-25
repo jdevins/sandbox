@@ -35,7 +35,8 @@ export const DEFAULT_TREND_SYSTEM =
   'Given a sequence of daily summaries, identify the throughlines — not a day-by-day ' +
   'recap. Surface: recurring themes and projects, how focus shifted over the period, ' +
   'momentum (what is accelerating or stalling), and patterns worth acting on.\n\n' +
-  'Format: a few short paragraphs. Be concise, concrete, and forward-looking.';
+  'Format: a few short paragraphs, plain prose. No markdown formatting — no asterisks, ' +
+  'no headers, no bullet lists. Be concise, concrete, and forward-looking.';
 
 // Migration-aware accessor: new day-level summary, falling back to the legacy
 // executive report so previously-reported days read as already-summarized.
