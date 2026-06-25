@@ -253,6 +253,14 @@ const process = [
     description: 'Tests use node:test and boot the server via createServer() with app.listen(0) (ephemeral port). Do not bind to a fixed port in tests.',
   },
   {
+    id: 'process-no-hardcoded-prompt-urls',
+    category: 'process',
+    level: 'error',
+    status: 'active',
+    origin: 'bugfix',
+    description: 'Scheduled/agent prompts (prompts/*.md) must reference the server via the {{BASE_URL}} placeholder, not a hardcoded host:port. src/scheduler.js substitutes it at runtime with the actual instance\'s base URL. Found when a prompt\'s hardcoded http://localhost:3000 caused a test run (against an alternate port) to silently mutate production backlog data instead of the test instance — the agent had no way to know which server it was supposed to target.',
+  },
+  {
     id: 'process-test-server-cleanup',
     category: 'process',
     level: 'error',

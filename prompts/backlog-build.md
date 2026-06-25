@@ -16,14 +16,14 @@ branch. You never merge, and you never touch an item that the human hasn't appro
 ## Steps
 
 1. Fetch the backlog and pick the first eligible item:
-   `curl -s http://localhost:3000/apps/backlog/api/items`
+   `curl -s {{BASE_URL}}/apps/backlog/api/items`
    Eligible = `status === "ready" && approvedForBuild === true && claim === null`.
    If none, stop and report "nothing approved to build."
 
 2. Claim it (atomic — a 409 means someone else got it; if so, stop):
 
    ```
-   curl -s -X POST http://localhost:3000/apps/backlog/api/items/<ID>/claim \
+   curl -s -X POST {{BASE_URL}}/apps/backlog/api/items/<ID>/claim \
      -H 'Content-Type: application/json' -d '{"by":"builder"}'
    ```
 
@@ -35,7 +35,7 @@ branch. You never merge, and you never touch an item that the human hasn't appro
 5. Report completion back to the backlog, recording the branch/PR in the result:
 
    ```
-   curl -s -X POST http://localhost:3000/apps/backlog/api/items/<ID>/complete \
+   curl -s -X POST {{BASE_URL}}/apps/backlog/api/items/<ID>/complete \
      -H 'Content-Type: application/json' \
      -d '{"by":"builder","status":"done","result":"PR #NN on branch backlog/<ID>-..."}'
    ```

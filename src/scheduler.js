@@ -8,6 +8,11 @@ import { ROOT } from './app.js';
 const SCHEDULES_FILE = path.join(ROOT, 'data', 'schedules.json');
 const LOG_FILE = path.join(ROOT, 'data', 'scheduler-log.json');
 
+// The actual server this process is bound to — prompts reference it via the
+// {{BASE_URL}} placeholder (see runPrompt) instead of a hardcoded host:port,
+// so a prompt run against any instance always targets that instance's data.
+const BASE_URL = `http://localhost:${process.env.PORT || 3000}`;
+
 const tasks = new Map(); // id → { task, job }
 let log = {};
 
@@ -120,6 +125,8 @@ function runPrompt(job, context) {
     writeRun(job.id, { status: 'error', output: `Could not read prompt: ${e.message}` });
     return;
   }
+
+  promptText = promptText.split('{{BASE_URL}}').join(BASE_URL);
 
   // Manual "pickup" runs (triggered from a single backlog item) append a scope
   // note rather than editing the prompt file, so the agent narrows to one item

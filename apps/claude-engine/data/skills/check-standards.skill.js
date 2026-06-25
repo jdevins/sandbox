@@ -95,9 +95,10 @@ export const tests = [
     name: 'filters by category — process',
     input: { category: 'process' },
     expect: {
-      summary: '2 required · 2 advisory · 0 overridden',
+      summary: '3 required · 2 advisory · 0 overridden',
       errors: [
         { id: 'process-version-required', level: 'error', description: 'Every app exports a version field in meta (e.g. version: "1.0.0"). Missing version is a contract violation.', overridden: false, overrideReason: null },
+        { id: 'process-no-hardcoded-prompt-urls', level: 'error', description: 'Scheduled/agent prompts (prompts/*.md) must reference the server via the {{BASE_URL}} placeholder, not a hardcoded host:port. src/scheduler.js substitutes it at runtime with the actual instance\'s base URL. Found when a prompt\'s hardcoded http://localhost:3000 caused a test run (against an alternate port) to silently mutate production backlog data instead of the test instance — the agent had no way to know which server it was supposed to target.', overridden: false, overrideReason: null },
         { id: 'process-test-server-cleanup', level: 'error', description: 'Any test that opens a server with app.listen() must close it in a try/finally (or t.after hook), not as the last line of the test body. A thrown assertion before close() leaves the listener open, which keeps the node:test child process alive indefinitely and stalls every subsequent test file. Found when a route change broke test/engine.test.js and the dangling server hung npm test for the rest of the session.', overridden: false, overrideReason: null },
       ],
       warnings: [

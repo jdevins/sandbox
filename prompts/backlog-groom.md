@@ -21,7 +21,7 @@ you will misidentify features and produce wrong annotations.
 ## Steps
 
 1. Fetch the backlog:
-   `curl -s http://localhost:3000/apps/backlog/api/items`
+   `curl -s {{BASE_URL}}/apps/backlog/api/items`
 
 2. Filter to items where `status === "ready-to-groom"`. Skip everything else —
    especially `groomer-blocked` items, which stay blocked until a human edits them.
@@ -44,7 +44,7 @@ you will misidentify features and produce wrong annotations.
 4. Post each annotation (advances `ready-to-groom → groomed`):
 
    ```
-   curl -s -X POST http://localhost:3000/apps/backlog/api/items/<ID>/annotate \
+   curl -s -X POST {{BASE_URL}}/apps/backlog/api/items/<ID>/annotate \
      -H 'Content-Type: application/json' \
      -d '{"agent":"groomer","kind":"estimate","body":"M — touches schema + UI","estimate":"M"}'
    ```
@@ -52,7 +52,7 @@ you will misidentify features and produce wrong annotations.
 5. If an item cannot be correlated, block it instead:
 
    ```
-   curl -s -X POST http://localhost:3000/apps/backlog/api/items/<ID>/groom-block \
+   curl -s -X POST {{BASE_URL}}/apps/backlog/api/items/<ID>/groom-block \
      -H 'Content-Type: application/json' \
      -d '{"agent":"groomer","reason":"Checked apps/ and claude-engine features — no feature named X exists. Need: which app or feature this targets."}'
    ```
