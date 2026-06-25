@@ -68,10 +68,10 @@ export function createFeature(ctx) {
     console.log('[session-repack] daily repack scheduled (23:55, in-process, $0)');
   }
 
-  // Singleton backfill job state — guarded so restarts don't orphan a running job.
-  const BF_KEY = Symbol.for('session-repack.backfill');
-  if (!globalThis[BF_KEY]) globalThis[BF_KEY] = { running: false, total: 0, done: 0, errors: [], current: null, startedAt: null, finishedAt: null };
-  const bf = () => globalThis[BF_KEY];
+  // Singleton repack-all job state — guarded so restarts don't orphan a running job.
+  const RA_KEY = Symbol.for('session-repack.repack-all');
+  if (!globalThis[RA_KEY]) globalThis[RA_KEY] = { running: false, total: 0, done: 0, errors: [], current: null, startedAt: null, finishedAt: null };
+  const ra = () => globalThis[RA_KEY];
 
   // Singleton summarize/trend job state (one background job at a time).
   const SUM_KEY = Symbol.for('session-repack.summarize');
@@ -145,19 +145,20 @@ export function createFeature(ctx) {
     });
   }
 
-  async function runBackfill() {
-    const state = bf();
+  // Repack every date with any transcript activity — missing dates (old
+  // Backfill's job) and already-repacked dates alike. Safe to run repeatedly:
+  // buildDayRepack always carries forward summary/mergedSummary/submitted/
+  // exported from the existing record, so re-running never loses Stage 2 work.
+  async function runRepackAll() {
+    const state = ra();
     if (state.running) return;
-    const existing = new Set(
-      (await store.list()).filter((d) => Array.isArray(d.sessions)).map((d) => d.date),
-    );
     const allDates = await findAllDates();
-    const pending = allDates.filter((d) => !existing.has(d)).reverse(); // newest first
+    const pending = [...allDates].reverse(); // newest first
     Object.assign(state, { running: true, total: pending.length, done: 0, errors: [], current: null, startedAt: new Date().toISOString(), finishedAt: null });
     for (const date of pending) {
       state.current = date;
       try {
-        const previous = existing.has(date) ? await store.get(date).catch(() => null) : null;
+        const previous = await store.get(date).catch(() => null);
         const day = await buildDayRepack(date, { previous });
         await store.save(day);
       } catch (e) {
@@ -225,7 +226,7 @@ export function createFeature(ctx) {
       const trendBtn = ui.btn({
         action: 'post',
         name: `${base}/trend/week/${wk}${trend ? '?force=1' : ''}`,
-        label: trend ? '↻ Re-summarize week' : '✨ Summarize week',
+        label: trend ? '↻ Re-run week trend' : '📈 Week trend',
         llm: true,
         status: `${base}/job/status.json`,
       });
@@ -250,15 +251,15 @@ export function createFeature(ctx) {
       ${ui.btn({ href: `${base}/import`, label: '📥 Import' })}
       ${ui.menu(html`
         <form method="POST">
-          <label class="eng-check" style="font-size:12px;margin:0"><input type="checkbox" name="force" value="1"/> Re-summarize</label>
+          <label class="eng-check" style="font-size:12px;margin:0"><input type="checkbox" name="force" value="1"/> Force re-run</label>
           <button class="btn llm" type="submit" formaction="${base}/${today()}/summarize" data-llm-status="${base}/job/status.json">✨ Summarize today</button>
-          <button class="btn llm" type="submit" formaction="${base}/trend/week/${currentWk}" data-llm-status="${base}/job/status.json">📈 Summarize week</button>
+          <button class="btn llm" type="submit" formaction="${base}/trend/week/${currentWk}" data-llm-status="${base}/job/status.json">📈 Week trend</button>
         </form>
         ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today' })}
         ${ui.btn({ href: `${base}/trends`, label: '📈 Trends' })}
         ${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}
         ${ui.btn({ href: `${base}/prompt`, label: '✏️ Prompts' })}
-        ${ui.btn({ action: 'post', name: `${base}/backfill`, label: '📥 Backfill history' })}
+        ${ui.btn({ action: 'post', name: `${base}/repack-all`, label: '🔁 Repack all' })}
       `)}`;
 
     const statusChip = (label, val) => ui.btn({ href: `${base}?status=${val}`, label, primary: statusFilter === val });
@@ -284,7 +285,7 @@ export function createFeature(ctx) {
   });
 
   router.post('/run', async (req, res) => {
-    const day = await runRepack(req.body?.date || today());
+    const day = await runRepack(today());
     res.redirect(`${base}/${day.date}`);
   });
 
@@ -486,34 +487,34 @@ export function createFeature(ctx) {
     res.send(shell('Historical JSONL', body, [...crumb, { href: '#', label: 'historical' }]));
   });
 
-  // ── Backfill ───────────────────────────────────────────────────────────────
-  router.post('/backfill', async (req, res) => {
-    const state = bf();
+  // ── Repack all ─────────────────────────────────────────────────────────────
+  router.post('/repack-all', async (req, res) => {
+    const state = ra();
     if (!state.running) {
-      runBackfill().catch((e) => {
-        const s = bf();
+      runRepackAll().catch((e) => {
+        const s = ra();
         s.running = false;
         s.errors = [...(s.errors || []), `Fatal: ${e.message}`];
         s.finishedAt = new Date().toISOString();
       });
     }
-    res.redirect(`${base}/backfill/status`);
+    res.redirect(`${base}/repack-all/status`);
   });
 
-  router.get('/backfill/status', (req, res) => {
-    const s = bf();
+  router.get('/repack-all/status', (req, res) => {
+    const s = ra();
     const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
     const errs = s.errors?.length ?? 0;
     const subtitle = s.running
       ? `${s.done} of ${s.total} days processed — ${s.current || '…'}`
       : s.finishedAt
-        ? `${s.done} days added · ${errs} error${errs === 1 ? '' : 's'} · finished ${s.finishedAt.slice(11, 19)}`
-        : 'Press "Backfill history" on the repacks page to start.';
+        ? `${s.done} days repacked · ${errs} error${errs === 1 ? '' : 's'} · finished ${s.finishedAt.slice(11, 19)}`
+        : 'Press "Repack all" on the repacks page to start.';
 
     const body = html`
       ${s.running ? raw('<meta http-equiv="refresh" content="2">') : ''}
       ${ui.pageHead({
-        title: s.running ? `📥 Backfill running… (${pct}%)` : '📥 Backfill complete',
+        title: s.running ? `🔁 Repacking all… (${pct}%)` : '🔁 Repack all complete',
         subtitle,
         actions: s.running ? '' : ui.btn({ href: base, label: '← Repacks', primary: true }),
       })}
@@ -521,7 +522,7 @@ export function createFeature(ctx) {
       ${errs
         ? html`<div class="card"><strong>Errors</strong><ul style="margin:8px 0 0">${s.errors.map((e) => html`<li>${e}</li>`)}</ul></div>`
         : ''}`;
-    res.send(shell(s.running ? 'Backfill…' : 'Backfill done', body, crumb));
+    res.send(shell(s.running ? 'Repacking…' : 'Repack all done', body, crumb));
   });
 
   // ── Trend: week (one-click) and custom range ───────────────────────────────
@@ -755,7 +756,6 @@ export function createFeature(ctx) {
             status: `${base}/job/status.json`,
           })}
           ${ui.menu(html`
-            ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Re-repack' })}
             ${ui.btn({ href: promptEditHref, label: '✏️ Edit prompts' })}
           `)}
         `,
