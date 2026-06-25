@@ -39,14 +39,23 @@ export const DEFAULT_TREND_SYSTEM =
 // executive report so previously-reported days read as already-summarized.
 export const daySummary = (day) => day?.summary || day?.report || null;
 
+// Quoted session content is people talking *about* Claude Code, which means it
+// routinely contains real, literal tag syntax (<system-reminder>, someone
+// pasting a fake <system> tag while debugging exactly this). No amount of
+// instructing the model how to react survives that — an instruction about
+// "don't flag this" is itself injection-shaped. So strip the one thing that
+// actually makes text tag-shaped: angle brackets become similar-looking but
+// inert characters before any of this reaches a prompt.
+const detag = (s) => String(s ?? '').replace(/</g, '‹').replace(/>/g, '›');
+
 function promptForDay(day) {
   const sessions = (day.sessions || []).filter((s) => s.kind === 'interactive');
   const lines = [`Date: ${day.date}`, `Sessions: ${sessions.length}`];
   for (const s of sessions) {
-    lines.push(`\n--- ${s.title} ---`);
-    if (s.prompts?.length) lines.push(`Asked: ${s.prompts.join(' | ')}`);
-    if (s.filesTouched?.length) lines.push(`Files: ${s.filesTouched.slice(0, 12).join(', ')}`);
-    if (s.outcome) lines.push(`Outcome: ${s.outcome.slice(0, 300)}`);
+    lines.push(`\n--- ${detag(s.title)} ---`);
+    if (s.prompts?.length) lines.push(`Asked: ${detag(s.prompts.join(' | '))}`);
+    if (s.filesTouched?.length) lines.push(`Files: ${detag(s.filesTouched.slice(0, 12).join(', '))}`);
+    if (s.outcome) lines.push(`Outcome: ${detag(s.outcome.slice(0, 300))}`);
   }
   return lines.join('\n');
 }
@@ -57,7 +66,7 @@ function promptForTrend(days) {
   for (const d of days) {
     const s = daySummary(d);
     if (!s) continue;
-    lines.push(`\n=== ${d.date} ===`, s.slice(0, 1200));
+    lines.push(`\n=== ${d.date} ===`, detag(s.slice(0, 1200)));
   }
   return lines.join('\n');
 }
