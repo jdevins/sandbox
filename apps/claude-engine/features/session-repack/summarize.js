@@ -7,6 +7,8 @@
  * unless a live provider is configured.
  */
 
+import { formatDuration } from './repack.js';
+
 // Both prompts below quote raw excerpts from Claude Code session transcripts —
 // titles, asked questions, outcomes. Those transcripts routinely contain
 // literal tags like <system-reminder> (that's just what Claude Code sessions
@@ -48,9 +50,16 @@ export const daySummary = (day) => day?.summary || day?.report || null;
 // inert characters before any of this reaches a prompt.
 const detag = (s) => String(s ?? '').replace(/</g, '‹').replace(/>/g, '›');
 
+// HH:MM from an ISO timestamp — same raw slice convention used everywhere
+// else in this feature (day.generatedAt, session start/end), not local time.
+const timeOf = (iso) => (iso ? iso.slice(11, 16) : null);
+
 function promptForDay(day) {
   const sessions = (day.sessions || []).filter((s) => s.kind === 'interactive');
   const lines = [`Date: ${day.date}`, `Sessions: ${sessions.length}`];
+  if (day.firstChatAt) lines.push(`First chat: ${timeOf(day.firstChatAt)}`);
+  if (day.lastChatAt) lines.push(`Last chat: ${timeOf(day.lastChatAt)}`);
+  if (day.activeMs) lines.push(`Active chat duration: ${formatDuration(day.activeMs)}`);
   for (const s of sessions) {
     lines.push(`\n--- ${detag(s.title)} ---`);
     if (s.prompts?.length) lines.push(`Asked: ${detag(s.prompts.join(' | '))}`);

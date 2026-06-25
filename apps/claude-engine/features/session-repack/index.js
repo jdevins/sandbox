@@ -3,7 +3,7 @@ import path from 'node:path';
 import cron from 'node-cron';
 import { html, raw } from '../../lib/html.js';
 import { jsonStore } from '../../lib/store.js';
-import { buildDayRepack, findAllDates, localDate, readSessionRecords, scanGrouped } from './repack.js';
+import { buildDayRepack, findAllDates, formatDuration, localDate, readSessionRecords, scanGrouped } from './repack.js';
 import { summarizeDay, summarizeTrend, daySummary, DEFAULT_DAILY_SYSTEM, DEFAULT_TREND_SYSTEM } from './summarize.js';
 
 export const meta = {
@@ -243,22 +243,22 @@ export function createFeature(ctx) {
     });
 
     // Bulk action bar — a real form so the Re-summarize checkbox rides along to
-    // whichever button is pressed (formaction routes it). Everything but the
-    // primary "Repack today" action lives behind the header overflow menu.
+    // whichever button is pressed (formaction routes it). Everything but
+    // Export/Import lives behind the header overflow menu.
     const actions = html`
-      ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today', primary: true })}
+      ${ui.btn({ action: 'post', name: `${base}/export`, label: `📤 Export new (${pendingExport})`, primary: true })}
+      ${ui.btn({ href: `${base}/import`, label: '📥 Import' })}
       ${ui.menu(html`
         <form method="POST">
           <label class="eng-check" style="font-size:12px;margin:0"><input type="checkbox" name="force" value="1"/> Re-summarize</label>
           <button class="btn llm" type="submit" formaction="${base}/${today()}/summarize" data-llm-status="${base}/job/status.json">✨ Summarize today</button>
           <button class="btn llm" type="submit" formaction="${base}/trend/week/${currentWk}" data-llm-status="${base}/job/status.json">📈 Summarize week</button>
         </form>
+        ${ui.btn({ action: 'post', name: `${base}/run`, label: '↻ Repack today' })}
         ${ui.btn({ href: `${base}/trends`, label: '📈 Trends' })}
         ${ui.btn({ href: `${base}/raw`, label: '🔍 Historical JSONL' })}
         ${ui.btn({ href: `${base}/prompt`, label: '✏️ Prompts' })}
         ${ui.btn({ action: 'post', name: `${base}/backfill`, label: '📥 Backfill history' })}
-        ${ui.btn({ action: 'post', name: `${base}/export`, label: `📤 Export new (${pendingExport})` })}
-        ${ui.btn({ href: `${base}/import`, label: '📥 Import' })}
       `)}`;
 
     const statusChip = (label, val) => ui.btn({ href: `${base}?status=${val}`, label, primary: statusFilter === val });
@@ -742,7 +742,9 @@ export function createFeature(ctx) {
     const body = html`
       ${ui.pageHead({
         title: `📋 ${day.date}`,
-        subtitle: `${real.length} interactive · ${fmtTokens(day.tokens)} · generated ${day.generatedAt.slice(11, 16)}`,
+        subtitle: `${real.length} interactive · ${fmtTokens(day.tokens)}` +
+          (day.firstChatAt ? ` · ${day.firstChatAt.slice(11, 16)}–${day.lastChatAt.slice(11, 16)} (${formatDuration(day.activeMs)} active)` : '') +
+          ` · generated ${day.generatedAt.slice(11, 16)}`,
         actions: html`
           ${ui.btn({
             action: 'post',

@@ -297,6 +297,15 @@ export async function scanDay(date, env = process.env) {
   return sessions.sort((a, b) => (b.end || '').localeCompare(a.end || ''));
 }
 
+// Human-readable "Xh Ym" (or "Ym" under an hour) for a millisecond duration.
+export function formatDuration(ms) {
+  if (!ms || ms < 0) return '0m';
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
 /**
  * Build a full day record. Carries forward the day-level summary (and legacy
  * report) from any existing record so re-running Stage 1 never discards the
@@ -309,7 +318,34 @@ export async function buildDayRepack(date, { previous } = {}, env = process.env)
     (acc, s) => ({ in: acc.in + s.tokens.in, out: acc.out + s.tokens.out, cache: acc.cache + s.tokens.cache }),
     { in: 0, out: 0, cache: 0 },
   );
-  const day = { id: date, date, generatedAt: new Date().toISOString(), counts, tokens, sessions };
+
+  // First/last chat and active duration are scoped to interactive sessions —
+  // a scheduled automated job at 11pm shouldn't make the day look like it ran
+  // until 11pm. "Active" sums each session's own (end - start), not the
+  // wall-clock span between first and last, so idle gaps between sessions
+  // don't count as active time.
+  const real = sessions.filter((s) => s.kind === 'interactive');
+  const starts = real.map((s) => s.start).filter(Boolean).sort();
+  const ends = real.map((s) => s.end).filter(Boolean).sort();
+  const firstChatAt = starts[0] || null;
+  const lastChatAt = ends[ends.length - 1] || null;
+  // Merge overlapping session intervals before summing — concurrent sessions
+  // (e.g. two Claude Code windows open at once) would otherwise double-count
+  // the overlapping time, inflating "active" past the day's actual span.
+  const intervals = real
+    .filter((s) => s.start && s.end)
+    .map((s) => [new Date(s.start).getTime(), new Date(s.end).getTime()])
+    .sort((a, b) => a[0] - b[0]);
+  let activeMs = 0;
+  let cur = null;
+  for (const [start, end] of intervals) {
+    if (!cur) { cur = [start, end]; continue; }
+    if (start <= cur[1]) cur[1] = Math.max(cur[1], end); // overlaps/touches — extend
+    else { activeMs += cur[1] - cur[0]; cur = [start, end]; }
+  }
+  if (cur) activeMs += cur[1] - cur[0];
+
+  const day = { id: date, date, generatedAt: new Date().toISOString(), counts, tokens, firstChatAt, lastChatAt, activeMs, sessions };
   // Preserve a previously-generated day summary (new field, or legacy report).
   if (previous?.summary) {
     day.summary = previous.summary;
