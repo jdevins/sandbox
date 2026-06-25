@@ -38,15 +38,18 @@ export function cliProvider({ model } = {}) {
     name: 'cli',
     model: model || 'claude',
     async complete({ system, prompt } = {}) {
-      const fullPrompt = system
-        ? `<system>\n${system}\n</system>\n\n${prompt || ''}`
-        : (prompt || '');
-
       return new Promise((resolve, reject) => {
         const args = ['-p'];
         if (model) args.push('--model', model);
+        // Use the CLI's native flag instead of hand-wrapping in literal
+        // <system> tags — that wrapper was itself indistinguishable from a
+        // real injection attempt and is what triggered the recurring
+        // false-positive flagging, independent of anything in the content.
+        if (system) args.push('--system-prompt', system);
 
-        const child = spawn('claude', args, { shell: true });
+        // shell:false so `system`/`prompt` text reaches the CLI as literal argv/
+        // stdin — no shell metacharacter interpretation, regardless of content.
+        const child = spawn('claude', args, { shell: false });
         let output = '';
         let errOut = '';
 
@@ -61,7 +64,7 @@ export function cliProvider({ model } = {}) {
           }
         });
 
-        child.stdin.write(fullPrompt);
+        child.stdin.write(prompt || '');
         child.stdin.end();
       });
     },
