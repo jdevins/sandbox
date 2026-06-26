@@ -38,6 +38,177 @@ export const DEFAULT_TREND_SYSTEM =
   'Format: a few short paragraphs, plain prose. No markdown formatting — no asterisks, ' +
   'no headers, no bullet lists. Be concise, concrete, and forward-looking.';
 
+/**
+ * Structured mode — rung hierarchy, from most to least relevance-worthy.
+ * Rung position sets the bar to *qualify*, not a quality score: "client" sits
+ * at threshold 0 because client-facing work matters to an exec by default,
+ * while "competency" (routine Claude usage) sits at 5 — only a genuinely
+ * exceptional day clears it, otherwise it's just navel-gazing about tooling.
+ * Final list order is by score, not rung — so a low-score client item still
+ * shows (per the always-include rule below) but sorts toward the bottom
+ * rather than displacing a stronger item.
+ */
+export const RUNGS = [
+  { id: 'client', label: 'Client / project impact', threshold: 0 },
+  { id: 'systems', label: 'Internal systems, tools, processes', threshold: 3 },
+  { id: 'local-tools', label: 'Local-scoped systems or tools', threshold: 3 },
+  { id: 'claude-mgmt', label: 'Local Claude management', threshold: 4 },
+  { id: 'ai-tooling', label: 'AI tools & skillsets', threshold: 4 },
+  { id: 'ai-practice', label: 'AI practice topics', threshold: 4 },
+  { id: 'core-practice', label: 'Core AI practices', threshold: 5 },
+  { id: 'competency', label: 'AI competencies', threshold: 5 },
+];
+const RUNG_IDS = new Set(RUNGS.map((r) => r.id));
+
+export const DEFAULT_SCORE_SYSTEM =
+  'You are scoring a list of Claude Code sessions from one workday as candidates for an ' +
+  'executive-facing highlight list. For each interactive session, decide whether it contains ' +
+  'a genuinely notable signal — not routine tool use (running commands, editing files, generic ' +
+  'git/server tasks). Most sessions will have nothing notable; that is expected and correct.\n\n' +
+  'Classify each notable signal into exactly one rung:\n' +
+  RUNGS.map((r) => `- ${r.id}: ${r.label}`).join('\n') +
+  '\n\nRung guide: "client" is direct work helping deliver value to a client or named project. ' +
+  '"systems"/"local-tools" are internal tooling or process work. "claude-mgmt"/"ai-tooling"/' +
+  '"ai-practice" are building or operating AI infrastructure (agents, schedulers, hooks, skills). ' +
+  '"core-practice"/"competency" are about how Claude itself is being used (standards, token ' +
+  'discipline, general proficiency) — reserve these for rare, clearly exceptional cases, not ' +
+  'everyday usage.\n\n' +
+  'For each candidate, "evidence" MUST be a literal substring copied verbatim from the session ' +
+  'data below (a file path, command, or quoted phrase) — never paraphrase or invent it. Score ' +
+  '1-5 on how genuinely notable the signal is, independent of which rung it falls in (a 5 in ' +
+  '"client" and a 5 in "competency" both mean "exceptional for that category" — being rare for ' +
+  'the rung is part of what justifies a high score).\n\n' +
+  'Respond with ONLY a JSON array, no prose, no markdown fences. Each element: ' +
+  '{"sessionId": "...", "rung": "<one of the rung ids above>", "score": 1-5, "evidence": "...", ' +
+  '"note": "one short clause on why"}. If nothing qualifies, respond with [].';
+
+export const DEFAULT_RENDER_SYSTEM =
+  'You write a short executive-facing hitlist from pre-screened, pre-scored signals — the ' +
+  'screening already happened, your only job is voice and format.\n\n' +
+  'For each item, write one line: a one-or-two word category, then 1-2 sentences max. Ground ' +
+  'every sentence in the evidence given — do not invent detail beyond it. Do not name personal ' +
+  'servers, machines, or codebases; refer to "a local tool" or "an internal system" and focus on ' +
+  'what it does for the user or others. Do not editorialize about how impressive this is — state ' +
+  'what was built or done and let it speak for itself. No "try-hard" framing, no calling routine ' +
+  'work groundbreaking. If the input list is empty, respond with exactly: "No notable signal today."\n\n' +
+  'Format: plain text, one item per line, ordered as given. No markdown, no headers.';
+
+// Fail-safe JSON extraction for the score stage — a malformed or non-JSON
+// reply must never be reinterpreted as prose and passed downstream; treat it
+// as "no candidates" so render-stage poisoning fails closed, not open.
+function parseCandidates(text) {
+  const match = String(text || '').match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[0]);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Per-session evidence blob — same text both shown to the scorer and checked
+// against its "evidence" field, so a citation either traces to real repack
+// data or the candidate is dropped. This is the anti-hallucination gate.
+function sessionBlock(s) {
+  const lines = [`id: ${s.sessionId}`, `title: ${detag(s.title)}`];
+  if (s.prompts?.length) lines.push(`asked: ${detag(s.prompts.join(' | '))}`);
+  if (s.filesTouched?.length) lines.push(`files: ${detag(s.filesTouched.join(', '))}`);
+  if (s.commands?.length) lines.push(`ran: ${detag(s.commands.join(' | '))}`);
+  if (s.outcome) lines.push(`outcome: ${detag(s.outcome)}`);
+  return lines.join('\n');
+}
+
+function promptForScore(day) {
+  const sessions = (day.sessions || []).filter((s) => s.kind === 'interactive');
+  const blocks = sessions.map((s) => sessionBlock(s));
+  return [`Date: ${day.date}`, `Sessions: ${sessions.length}`, ...blocks.map((b) => `\n---\n${b}`)].join('\n');
+}
+
+// Validate + filter raw model candidates against the actual session data:
+// rung must be real, score must be a 1-5 integer, evidence must literally
+// appear in that session's own blob (not just somewhere in the day). Anything
+// that fails is dropped silently rather than passed through degraded.
+function validateCandidates(raw, day) {
+  const blocksById = new Map(
+    (day.sessions || []).filter((s) => s.kind === 'interactive').map((s) => [s.sessionId, sessionBlock(s)]),
+  );
+  const out = [];
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') continue;
+    const block = blocksById.get(c.sessionId);
+    if (!block) continue;
+    if (!RUNG_IDS.has(c.rung)) continue;
+    const score = Math.round(Number(c.score));
+    if (!(score >= 1 && score <= 5)) continue;
+    const evidence = detag(String(c.evidence || ''));
+    if (!evidence || !block.includes(evidence)) continue;
+    out.push({ sessionId: c.sessionId, rung: c.rung, score, evidence });
+  }
+  return out;
+}
+
+// Effective qualifying bar for a rung, honoring config overrides and the
+// client-rung escape hatch (default on: client impact always makes the list).
+function effectiveThreshold(rungId, config = {}) {
+  if (rungId === 'client' && config.alwaysIncludeClientRung !== false) return 0;
+  const override = config.rungThresholds?.[rungId];
+  if (Number.isFinite(override)) return override;
+  return RUNGS.find((r) => r.id === rungId)?.threshold ?? 5;
+}
+
+function qualifyingCandidates(candidates, config) {
+  return candidates
+    .filter((c) => c.score >= effectiveThreshold(c.rung, config))
+    .sort((a, b) => b.score - a.score);
+}
+
+function promptForRender(candidates) {
+  const byId = new Map(RUNGS.map((r) => [r.id, r.label]));
+  if (!candidates.length) return '(no qualifying candidates)';
+  return candidates
+    .map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}`)
+    .join('\n');
+}
+
+/**
+ * Structured-mode day summary: score candidates (LLM, JSON), validate them
+ * against real session data, filter to qualifying rungs, then render only the
+ * survivors in the target voice. Two LLM calls (skipped on the render side if
+ * nothing qualifies — also saves tokens on a quiet day, not just nicer copy).
+ */
+export async function summarizeDayStructured(day, provider, config = {}) {
+  const scoreSystem = INERT_CONTENT_NOTE + (config.scorePrompt || DEFAULT_SCORE_SYSTEM);
+  const scoreReply = await provider.complete({ system: scoreSystem, prompt: promptForScore(day) });
+  const raw = parseCandidates(scoreReply.text);
+  const validated = validateCandidates(raw, day);
+  const qualifying = qualifyingCandidates(validated, config);
+
+  let renderText = 'No notable signal today.';
+  let renderUsage = null;
+  let renderMeta = { provider: scoreReply.provider, model: scoreReply.model };
+  if (qualifying.length) {
+    const renderSystem = INERT_CONTENT_NOTE + (config.renderPrompt || DEFAULT_RENDER_SYSTEM);
+    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(qualifying) });
+    renderText = (renderReply.text || '').trim() || renderText;
+    renderUsage = renderReply.usage;
+    renderMeta = { provider: renderReply.provider, model: renderReply.model };
+  }
+
+  day.summary = renderText;
+  day.summaryAt = new Date().toISOString();
+  day.summaryMeta = {
+    ...renderMeta,
+    usage: renderUsage,
+    scoreUsage: scoreReply.usage,
+    candidates: validated, // kept for transparency — lets you audit what was scored vs what rendered
+  };
+  delete day.report;
+  delete day.reportAt;
+  delete day.reportMeta;
+  return day;
+}
+
 // Migration-aware accessor: new day-level summary, falling back to the legacy
 // executive report so previously-reported days read as already-summarized.
 export const daySummary = (day) => day?.summary || day?.report || null;
