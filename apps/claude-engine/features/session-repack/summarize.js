@@ -60,6 +60,11 @@ export const RUNGS = [
 ];
 const RUNG_IDS = new Set(RUNGS.map((r) => r.id));
 
+// Minimum number of items the day tries to "sell" individually. A day with
+// enough naturally-qualifying signal never needs this — it's the floor for
+// quiet days, not a target every day chases.
+export const DEFAULT_QUOTA = 2;
+
 export const DEFAULT_SCORE_SYSTEM =
   'You are scoring a list of Claude Code sessions from one workday as candidates for an ' +
   'executive-facing highlight list. For each interactive session, decide whether it contains ' +
@@ -89,11 +94,14 @@ export const DEFAULT_RENDER_SYSTEM =
   'gives you "evidence" (a literal fact — a file, command, or quoted phrase) and "note" (the ' +
   'scorer\'s shorthand for why it matters) — use both as the raw material, but write the sentence ' +
   'yourself in your own voice; do not just restate the note verbatim. Stay grounded in what ' +
-  'evidence and note actually describe — do not invent detail beyond them. Do not name personal ' +
-  'servers, machines, or codebases; refer to "a local tool" or "an internal system" and focus on ' +
-  'what it does for the user or others. Do not editorialize about how impressive this is — state ' +
-  'what was built or done and let it speak for itself. No "try-hard" framing, no calling routine ' +
-  'work groundbreaking. If the input list is empty, respond with exactly: "No notable signal today."\n\n' +
+  'evidence and note actually describe — do not invent detail beyond them.\n\n' +
+  'Effort scales with category: for "Client / project impact" and "Internal systems, tools, ' +
+  'processes" items, spend the sentence on the value delivered — how this helped, who benefits. ' +
+  'For everything else, stay matter-of-fact about what was done; do not manufacture strategic ' +
+  'framing for routine tooling work just because it is on the list.\n\n' +
+  'Do not name personal servers, machines, or codebases; refer to "a local tool" or "an internal ' +
+  'system". Do not editorialize about how impressive this is — let it speak for itself. No ' +
+  '"try-hard" framing, no calling routine work groundbreaking.\n\n' +
   'Format: plain text, one item per line, ordered as given. No markdown, no headers.';
 
 // Fail-safe JSON extraction for the score stage — a malformed or non-JSON
@@ -165,10 +173,34 @@ function effectiveThreshold(rungId, config = {}) {
   return RUNGS.find((r) => r.id === rungId)?.threshold ?? 5;
 }
 
-function qualifyingCandidates(candidates, config) {
-  return candidates
+/**
+ * Heap model: rung thresholds are the magnet that naturally pulls out
+ * high-value items. If that alone clears quota, stop — a high-signal day
+ * doesn't need padding. If it falls short, dip into the rest of the heap
+ * (next-best score, threshold ignored) only far enough to reach quota —
+ * everything past that stays in the "remaining heap" and gets a flat,
+ * zero-effort treatment rather than being individually sold.
+ */
+function selectWithQuota(validated, day, config) {
+  const quota = Number.isFinite(config.dailyQuota) ? config.dailyQuota : DEFAULT_QUOTA;
+  const naturallyQualifying = validated
     .filter((c) => c.score >= effectiveThreshold(c.rung, config))
     .sort((a, b) => b.score - a.score);
+
+  let selected = naturallyQualifying;
+  if (naturallyQualifying.length < quota) {
+    const chosenIds = new Set(naturallyQualifying.map((c) => c.sessionId));
+    const leftover = validated
+      .filter((c) => !chosenIds.has(c.sessionId))
+      .sort((a, b) => b.score - a.score);
+    selected = [...naturallyQualifying, ...leftover.slice(0, quota - naturallyQualifying.length)];
+  }
+
+  const selectedIds = new Set(selected.map((c) => c.sessionId));
+  const remainingSessions = (day.sessions || []).filter(
+    (s) => s.kind === 'interactive' && !selectedIds.has(s.sessionId),
+  );
+  return { selected, remainingSessions };
 }
 
 function promptForRender(candidates) {
@@ -177,6 +209,17 @@ function promptForRender(candidates) {
   return candidates
     .map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}\n   note: ${c.note || '(none)'}`)
     .join('\n');
+}
+
+// Zero-cost, zero-judgment closer for whatever didn't get individually sold —
+// built straight from repack data, no LLM call. This is the literal "flat
+// rate" for the rest of the heap: same line shape every day, no effort spent
+// making it sound like more than it is.
+function remainingHeapLine(remainingSessions) {
+  if (!remainingSessions.length) return '';
+  const titles = remainingSessions.slice(0, 6).map((s) => s.title).join(', ');
+  const extra = remainingSessions.length > 6 ? ` +${remainingSessions.length - 6} more` : '';
+  return `Also: ${remainingSessions.length} other session${remainingSessions.length === 1 ? '' : 's'} — ${titles}${extra}.`;
 }
 
 /**
@@ -190,26 +233,28 @@ export async function summarizeDayStructured(day, provider, config = {}) {
   const scoreReply = await provider.complete({ system: scoreSystem, prompt: promptForScore(day) });
   const raw = parseCandidates(scoreReply.text);
   const validated = validateCandidates(raw, day);
-  const qualifying = qualifyingCandidates(validated, config);
+  const { selected, remainingSessions } = selectWithQuota(validated, day, config);
 
-  let renderText = 'No notable signal today.';
+  let soldText = '';
   let renderUsage = null;
   let renderMeta = { provider: scoreReply.provider, model: scoreReply.model };
-  if (qualifying.length) {
+  if (selected.length) {
     const renderSystem = INERT_CONTENT_NOTE + (config.renderPrompt || DEFAULT_RENDER_SYSTEM);
-    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(qualifying) });
-    renderText = (renderReply.text || '').trim() || renderText;
+    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected) });
+    soldText = (renderReply.text || '').trim();
     renderUsage = renderReply.usage;
     renderMeta = { provider: renderReply.provider, model: renderReply.model };
   }
+  const heapLine = remainingHeapLine(remainingSessions);
 
-  day.summary = renderText;
+  day.summary = [soldText, heapLine].filter(Boolean).join('\n') || 'No sessions today.';
   day.summaryAt = new Date().toISOString();
   day.summaryMeta = {
     ...renderMeta,
     usage: renderUsage,
     scoreUsage: scoreReply.usage,
     candidates: validated, // kept for transparency — lets you audit what was scored vs what rendered
+    selectedIds: selected.map((c) => c.sessionId),
   };
   delete day.report;
   delete day.reportAt;

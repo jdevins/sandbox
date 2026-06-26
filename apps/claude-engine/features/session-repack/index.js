@@ -13,6 +13,7 @@ import {
   DEFAULT_TREND_SYSTEM,
   DEFAULT_SCORE_SYSTEM,
   DEFAULT_RENDER_SYSTEM,
+  DEFAULT_QUOTA,
   RUNGS,
 } from './summarize.js';
 
@@ -727,6 +728,23 @@ export function createFeature(ctx) {
     res.redirect(req.body?.back || `${base}/prompt`);
   });
 
+  // Quota + rung thresholds — its own compact form, separate from the big
+  // prose-prompt editor below. A stacked column of full-width number inputs
+  // (one per rung) was unreadable for picking single digits 1-5; a small
+  // table of <select>s reads as the bounded scale it actually is.
+  router.post('/prompt/thresholds', async (req, res) => {
+    const patch = { alwaysIncludeClientRung: !!req.body?.alwaysIncludeClientRung, rungThresholds: {} };
+    for (const r of RUNGS) {
+      if (r.id === 'client') continue;
+      const v = Number(req.body?.[`rungThreshold_${r.id}`]);
+      patch.rungThresholds[r.id] = Number.isFinite(v) ? v : r.threshold;
+    }
+    const q = Number(req.body?.dailyQuota);
+    patch.dailyQuota = Number.isFinite(q) && q >= 0 ? q : DEFAULT_QUOTA;
+    await saveConfig(patch);
+    res.redirect(req.body?.back || `${base}/prompt`);
+  });
+
   router.get('/prompt', async (req, res) => {
     const config = await getConfig();
     // Migrate the legacy single reportPrompt into dailyPrompt for editing.
@@ -749,22 +767,38 @@ export function createFeature(ctx) {
     ];
 
     const structuredFields = [
-      {
-        name: 'alwaysIncludeClientRung',
-        type: 'boolean',
-        label: 'Client / project rung',
-        value: config.alwaysIncludeClientRung !== false,
-        checkboxLabel: 'Always include on the list (sorts by score, but never excluded)',
-      },
-      ...RUNGS.filter((r) => r.id !== 'client').map((r) => ({
-        name: `rungThreshold_${r.id}`,
-        type: 'number',
-        label: `${r.label} — min score to qualify`,
-        value: config.rungThresholds?.[r.id] ?? r.threshold,
-        help: '1-5. Higher = only the rarest, most exceptional signal at this rung makes the list.',
-      })),
       { name: 'renderPrompt', label: 'Hitlist voice/tone prompt', type: 'text', rows: 10, value: config.renderPrompt || DEFAULT_RENDER_SYSTEM, help: 'Formatting and voice only — scoring/evidence rules are fixed in code, not editable here.' },
     ];
+
+    // Compact thresholds + quota card — a bounded 1-5 scale belongs in a
+    // small <select>, not a full-width number box. Its own form/endpoint so
+    // it can sit visually above the big prose form without fighting
+    // configForm's field ordering.
+    const scoreSelect = (name, value) => html`<select name="${name}" style="width:auto;padding:4px 8px">
+      ${[1, 2, 3, 4, 5].map((n) => html`<option value="${n}" ${n === value ? 'selected' : ''}>${n}</option>`)}
+    </select>`;
+    const thresholdsCard = mode === 'structured' ? html`
+      <form method="POST" action="${base}/prompt/thresholds" class="card" style="margin-bottom:16px">
+        <input type="hidden" name="back" value="${back}">
+        <strong style="display:block;margin-bottom:10px">Quota &amp; rung thresholds</strong>
+        <label class="eng-check" style="margin-bottom:10px">
+          <input type="checkbox" name="alwaysIncludeClientRung" ${config.alwaysIncludeClientRung !== false ? 'checked' : ''}/>
+          Client / project rung always makes the list (sorts by score, never excluded)
+        </label>
+        ${ui.table(
+          ['Rung', 'Min score to qualify'],
+          RUNGS.filter((r) => r.id !== 'client').map((r) => [
+            r.label,
+            scoreSelect(`rungThreshold_${r.id}`, config.rungThresholds?.[r.id] ?? r.threshold),
+          ]),
+        )}
+        <div class="eng-field" style="max-width:220px;margin-top:10px">
+          <label for="f_dailyQuota">Daily quota — min items to sell</label>
+          <input type="number" id="f_dailyQuota" name="dailyQuota" min="0" max="10" value="${config.dailyQuota ?? DEFAULT_QUOTA}"/>
+          <small class="dim">If naturally-qualifying items fall short, the next-best scored items fill the gap; the rest gets one flat-rate line instead of going unmentioned.</small>
+        </div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" type="submit">Save thresholds</button></div>
+      </form>` : '';
 
     const body = html`
       ${ui.pageHead({
@@ -773,6 +807,7 @@ export function createFeature(ctx) {
         actions: ui.btn({ href: back, label: '← Back' }),
       })}
       ${modeSwitch}
+      ${thresholdsCard}
       ${ui.configForm({
         action: `${base}/prompt`,
         fields: [
@@ -794,16 +829,7 @@ export function createFeature(ctx) {
     const renderPrompt = (req.body?.renderPrompt || '').trim();
     const sourceLabel = (req.body?.sourceLabel || '').trim();
     const patch = { mode };
-    if (mode === 'structured') {
-      patch.alwaysIncludeClientRung = !!req.body?.alwaysIncludeClientRung;
-      patch.rungThresholds = {};
-      for (const r of RUNGS) {
-        if (r.id === 'client') continue;
-        const v = Number(req.body?.[`rungThreshold_${r.id}`]);
-        patch.rungThresholds[r.id] = Number.isFinite(v) ? v : r.threshold;
-      }
-      if (renderPrompt) patch.renderPrompt = renderPrompt;
-    }
+    if (mode === 'structured' && renderPrompt) patch.renderPrompt = renderPrompt;
     if (dailyPrompt) patch.dailyPrompt = dailyPrompt;
     if (trendPrompt) patch.trendPrompt = trendPrompt;
     patch.sourceLabel = sourceLabel; // allowed to clear
