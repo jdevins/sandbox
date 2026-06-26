@@ -4,7 +4,17 @@ import cron from 'node-cron';
 import { html, raw } from '../../lib/html.js';
 import { jsonStore } from '../../lib/store.js';
 import { buildDayRepack, findAllDates, formatDuration, localDate, readSessionRecords, scanGrouped } from './repack.js';
-import { summarizeDay, summarizeTrend, daySummary, DEFAULT_DAILY_SYSTEM, DEFAULT_TREND_SYSTEM } from './summarize.js';
+import {
+  summarizeDay,
+  summarizeDayStructured,
+  summarizeTrend,
+  daySummary,
+  DEFAULT_DAILY_SYSTEM,
+  DEFAULT_TREND_SYSTEM,
+  DEFAULT_SCORE_SYSTEM,
+  DEFAULT_RENDER_SYSTEM,
+  RUNGS,
+} from './summarize.js';
 
 export const meta = {
   name: 'Session Repack',
@@ -39,6 +49,14 @@ export function createFeature(ctx) {
   async function saveConfig(data) {
     const prev = await getConfig();
     await configStore.save({ id: 'config', ...prev, ...data });
+  }
+
+  // Mode is per-machine config (each machine has its own configStore), so
+  // home and work can independently A/B test simple vs structured scoring
+  // without any shared toggle or env var.
+  async function summarizeDayByMode(day, config) {
+    if (config.mode === 'structured') return summarizeDayStructured(day, provider, config);
+    return summarizeDay(day, provider, config.dailyPrompt);
   }
 
   const crumb = [{ href: base, label: 'Repacks' }];
@@ -97,13 +115,13 @@ export function createFeature(ctx) {
   // unless `force`.
   function summarizeDaysJob(dates, force) {
     return runJob('Summarizing days', dates.length, async (state) => {
-      const dailyPrompt = (await getConfig()).dailyPrompt;
+      const config = await getConfig();
       for (const date of dates) {
         state.current = date;
         try {
           const day = await store.get(date);
           if (force || !daySummary(day)) {
-            await summarizeDay(day, provider, dailyPrompt);
+            await summarizeDayByMode(day, config);
             await store.save(day);
           }
         } catch (e) {
@@ -127,7 +145,7 @@ export function createFeature(ctx) {
         state.current = day.date;
         try {
           if (force || !daySummary(day)) {
-            await summarizeDay(day, provider, config.dailyPrompt);
+            await summarizeDayByMode(day, config);
             await store.save(day);
           }
         } catch (e) {
@@ -699,22 +717,67 @@ export function createFeature(ctx) {
   });
 
   // ── Summary prompt editor (daily + trend) ──────────────────────────────────
+  // Mode lives per-machine in this same config, so home and work can each pick
+  // independently — switching it is its own small POST (not folded into the
+  // big form) so the page can re-render the right field set on reload rather
+  // than needing client JS to show/hide sections.
+  router.post('/prompt/mode', async (req, res) => {
+    const mode = req.body?.mode === 'structured' ? 'structured' : 'simple';
+    await saveConfig({ mode });
+    res.redirect(req.body?.back || `${base}/prompt`);
+  });
+
   router.get('/prompt', async (req, res) => {
     const config = await getConfig();
     // Migrate the legacy single reportPrompt into dailyPrompt for editing.
     const daily = config.dailyPrompt || config.reportPrompt || DEFAULT_DAILY_SYSTEM;
     const trend = config.trendPrompt || DEFAULT_TREND_SYSTEM;
     const back = req.query.back || base;
+    const mode = config.mode === 'structured' ? 'structured' : 'simple';
+
+    const modeSwitch = html`<form method="POST" action="${base}/prompt/mode" class="row" style="gap:6px;margin-bottom:14px">
+      <input type="hidden" name="back" value="${back}">
+      <input type="hidden" name="mode" value="${mode === 'simple' ? 'structured' : 'simple'}">
+      <span class="dim" style="line-height:28px;font-size:12px">Mode:</span>
+      ${ui.badge(mode === 'simple' ? 'Simple (current)' : 'Simple', mode === 'simple' ? 'ok' : '')}
+      ${ui.badge(mode === 'structured' ? 'Structured (current)' : 'Structured', mode === 'structured' ? 'ok' : '')}
+      <button class="btn" type="submit">Switch to ${mode === 'simple' ? 'Structured' : 'Simple'}</button>
+    </form>`;
+
+    const simpleFields = [
+      { name: 'dailyPrompt', label: 'Daily summary prompt', type: 'text', rows: 12, value: daily, help: 'Single-pass: extraction, ranking, and tone all in one prompt.' },
+    ];
+
+    const structuredFields = [
+      {
+        name: 'alwaysIncludeClientRung',
+        type: 'boolean',
+        label: 'Client / project rung',
+        value: config.alwaysIncludeClientRung !== false,
+        checkboxLabel: 'Always include on the list (sorts by score, but never excluded)',
+      },
+      ...RUNGS.filter((r) => r.id !== 'client').map((r) => ({
+        name: `rungThreshold_${r.id}`,
+        type: 'number',
+        label: `${r.label} — min score to qualify`,
+        value: config.rungThresholds?.[r.id] ?? r.threshold,
+        help: '1-5. Higher = only the rarest, most exceptional signal at this rung makes the list.',
+      })),
+      { name: 'renderPrompt', label: 'Hitlist voice/tone prompt', type: 'text', rows: 10, value: config.renderPrompt || DEFAULT_RENDER_SYSTEM, help: 'Formatting and voice only — scoring/evidence rules are fixed in code, not editable here.' },
+    ];
+
     const body = html`
       ${ui.pageHead({
         title: '✏️ Edit Summary Prompts',
         subtitle: 'System prompts for the daily summary and the cross-day trend.',
         actions: ui.btn({ href: back, label: '← Back' }),
       })}
+      ${modeSwitch}
       ${ui.configForm({
         action: `${base}/prompt`,
         fields: [
-          { name: 'dailyPrompt', label: 'Daily summary prompt', type: 'text', rows: 12, value: daily, help: 'Summarizes one day from its sessions.' },
+          { name: 'mode', type: 'string', value: mode, label: '' }, // carried through so POST knows which shape was submitted
+          ...(mode === 'structured' ? structuredFields : simpleFields),
           { name: 'trendPrompt', label: 'Trend prompt', type: 'text', rows: 10, value: trend, help: 'Summarizes themes across a week or custom range.' },
           { name: 'sourceLabel', label: 'Source label (this machine)', type: 'string', value: config.sourceLabel || '', placeholder: 'home, work, …', help: 'Tags this machine’s Exports so an Import on another machine can tell sources apart.' },
         ],
@@ -725,10 +788,22 @@ export function createFeature(ctx) {
   });
 
   router.post('/prompt', async (req, res) => {
+    const mode = req.body?.mode === 'structured' ? 'structured' : 'simple';
     const dailyPrompt = (req.body?.dailyPrompt || '').trim();
     const trendPrompt = (req.body?.trendPrompt || '').trim();
+    const renderPrompt = (req.body?.renderPrompt || '').trim();
     const sourceLabel = (req.body?.sourceLabel || '').trim();
-    const patch = {};
+    const patch = { mode };
+    if (mode === 'structured') {
+      patch.alwaysIncludeClientRung = !!req.body?.alwaysIncludeClientRung;
+      patch.rungThresholds = {};
+      for (const r of RUNGS) {
+        if (r.id === 'client') continue;
+        const v = Number(req.body?.[`rungThreshold_${r.id}`]);
+        patch.rungThresholds[r.id] = Number.isFinite(v) ? v : r.threshold;
+      }
+      if (renderPrompt) patch.renderPrompt = renderPrompt;
+    }
     if (dailyPrompt) patch.dailyPrompt = dailyPrompt;
     if (trendPrompt) patch.trendPrompt = trendPrompt;
     patch.sourceLabel = sourceLabel; // allowed to clear
