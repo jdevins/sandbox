@@ -118,15 +118,25 @@ function parseCandidates(text) {
   }
 }
 
+// Last 2 path segments only — full absolute paths are mostly repo-root
+// boilerplate that costs tokens without adding signal. Trimmed here (the
+// LLM-facing serialization) only; repack.js keeps full paths in storage for
+// the UI and raw-transcript viewer.
+const shortPath = (p) => String(p).split(/[\\/]/).slice(-2).join('/');
+
 // Per-session evidence blob — same text both shown to the scorer and checked
 // against its "evidence" field, so a citation either traces to real repack
 // data or the candidate is dropped. This is the anti-hallucination gate.
 function sessionBlock(s) {
   const lines = [`id: ${s.sessionId}`, `title: ${detag(s.title)}`];
   if (s.prompts?.length) lines.push(`asked: ${detag(s.prompts.join(' | '))}`);
-  if (s.filesTouched?.length) lines.push(`files: ${detag(s.filesTouched.join(', '))}`);
+  if (s.filesTouched?.length) lines.push(`files: ${detag(s.filesTouched.map(shortPath).join(', '))}`);
   if (s.commands?.length) lines.push(`ran: ${detag(s.commands.join(' | '))}`);
   if (s.outcome) lines.push(`outcome: ${detag(s.outcome)}`);
+  if (s.toolUseCounts && Object.keys(s.toolUseCounts).length) {
+    lines.push(`tools: ${detag(Object.entries(s.toolUseCounts).map(([n, c]) => `${n}×${c}`).join(', '))}`);
+  }
+  if (s.signals?.length) lines.push(`signals: ${detag(s.signals.join(', '))}`);
   return lines.join('\n');
 }
 

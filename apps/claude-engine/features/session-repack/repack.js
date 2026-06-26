@@ -19,6 +19,22 @@ const AUTOMATED_SENTINEL = '[automated]';
 // Fallback heuristic for sessions that predate the sentinel convention.
 const AGENT_HEADER = /^#\s.*\bagent\b/i;
 
+// Dev-loop mechanics (git, test runners, file listing, log digging) are noise
+// for "what did this session demonstrate" — capturing them anyway and
+// trusting the LLM to discount them on every call wastes both prompt space
+// and the model's attention. Drop them at the source instead.
+const NOISE_COMMAND_RE = /^(git\s|npm\s+(test|run|start|install|ci)\b|node\s+--(check|test)\b|ls\b|find\s|grep\s|curl\s|cat\s|wc\s|echo\s|cd\s)/i;
+
+// Mechanical, zero-inference rung hints derived straight from file paths —
+// these map to specific rungs without asking the model to infer anything.
+const SIGNAL_PATTERNS = [
+  { id: 'skill-module', re: /data[\\/]skills[\\/]/ },
+  { id: 'agent-module', re: /data[\\/]agents[\\/]/ },
+  { id: 'standards-doc', re: /(^|[\\/])standards[\\/]/ },
+  { id: 'feature-module', re: /features[\\/][^\\/]+[\\/]index\.js$/ },
+  { id: 'test-file', re: /\.test\.js$/ },
+];
+
 export function projectsDir(env = process.env) {
   return env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
@@ -212,22 +228,31 @@ function repackSession(sessionId, records, date) {
   const prompts = [];
   const filesTouched = new Set();
   const commands = [];
+  const textBlocks = []; // every non-empty assistant text block, not just the last
+  const toolUseCounts = {};
+  let editCount = 0;
   const tokens = { in: 0, out: 0, cache: 0 };
-  let outcome = '';
   let sidechain = false;
 
   for (const r of records) {
     if (r.isSidechain) sidechain = true;
     if (r.type === 'user') {
-      const t = userText(r);
-      if (t && prompts.length < 12) prompts.push(t.replace(/\s+/g, ' ').slice(0, 200));
+      const t = userText(r)?.replace(/\s+/g, ' ').trim();
+      // Skip bare acknowledgments ("yes", "resume", "continue") — they cost a
+      // slot in the cap without adding signal, crowding out substantive asks.
+      if (t && t.length >= 15 && prompts.length < 20) prompts.push(t.slice(0, 350));
     } else if (r.type === 'assistant') {
       for (const b of blocks(r.message)) {
-        if (b.type === 'text' && b.text.trim()) outcome = b.text.trim();
+        if (b.type === 'text' && b.text.trim()) textBlocks.push(b.text.trim());
         if (b.type === 'tool_use') {
-          if (TOOL_FILE_WRITERS.has(b.name) && b.input?.file_path) filesTouched.add(b.input.file_path);
+          toolUseCounts[b.name] = (toolUseCounts[b.name] || 0) + 1;
+          if (TOOL_FILE_WRITERS.has(b.name)) {
+            editCount++;
+            if (b.input?.file_path) filesTouched.add(b.input.file_path);
+          }
           if (b.name === 'Bash' && b.input?.command && commands.length < 30) {
-            commands.push(String(b.input.command).split('\n')[0].slice(0, 120));
+            const line = String(b.input.command).split('\n')[0].slice(0, 120);
+            if (!NOISE_COMMAND_RE.test(line.trim())) commands.push(line);
           }
         }
       }
@@ -239,6 +264,25 @@ function repackSession(sessionId, records, date) {
       }
     }
   }
+
+  // The single last assistant message is often just a closer ("Pushed.") —
+  // the substance is usually in whichever blocks said the most. Take the few
+  // longest (by index, not content, so duplicate text can't double-count),
+  // restore original order, join and cap.
+  const topIndexes = textBlocks
+    .map((t, i) => [i, t.length])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([i]) => i)
+    .sort((a, b) => a - b);
+  const outcome = topIndexes
+    .map((i) => textBlocks[i])
+    .join(' … ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 600);
+
+  const filePaths = [...filesTouched];
+  const signals = [...new Set(SIGNAL_PATTERNS.filter((p) => filePaths.some((f) => p.re.test(f))).map((p) => p.id))];
 
   const firstPrompt = prompts[0] || '';
   const firstPromptLine = firstPrompt.split('\n')[0];
@@ -257,9 +301,12 @@ function repackSession(sessionId, records, date) {
     msgCount: onDay.filter((r) => r.type === 'user' || r.type === 'assistant').length,
     tokens,
     prompts,
-    filesTouched: [...filesTouched],
+    filesTouched: filePaths,
     commands,
-    outcome: outcome.replace(/\s+/g, ' ').slice(0, 400),
+    outcome,
+    toolUseCounts,
+    editCount,
+    signals,
     summary: null,
     summarizedAt: null,
   };
