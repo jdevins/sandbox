@@ -85,8 +85,11 @@ export const DEFAULT_SCORE_SYSTEM =
 export const DEFAULT_RENDER_SYSTEM =
   'You write a short executive-facing hitlist from pre-screened, pre-scored signals — the ' +
   'screening already happened, your only job is voice and format.\n\n' +
-  'For each item, write one line: a one-or-two word category, then 1-2 sentences max. Ground ' +
-  'every sentence in the evidence given — do not invent detail beyond it. Do not name personal ' +
+  'For each item, write one line: a one-or-two word category, then 1-2 sentences max. Each item ' +
+  'gives you "evidence" (a literal fact — a file, command, or quoted phrase) and "note" (the ' +
+  'scorer\'s shorthand for why it matters) — use both as the raw material, but write the sentence ' +
+  'yourself in your own voice; do not just restate the note verbatim. Stay grounded in what ' +
+  'evidence and note actually describe — do not invent detail beyond them. Do not name personal ' +
   'servers, machines, or codebases; refer to "a local tool" or "an internal system" and focus on ' +
   'what it does for the user or others. Do not editorialize about how impressive this is — state ' +
   'what was built or done and let it speak for itself. No "try-hard" framing, no calling routine ' +
@@ -143,7 +146,12 @@ function validateCandidates(raw, day) {
     if (!(score >= 1 && score <= 5)) continue;
     const evidence = detag(String(c.evidence || ''));
     if (!evidence || !block.includes(evidence)) continue;
-    out.push({ sessionId: c.sessionId, rung: c.rung, score, evidence });
+    // note is grounding-exempt (it's the scorer's color commentary, not a
+    // checkable fact) but it's what gives the render stage something to
+    // actually write from — evidence alone is often just a bare file path,
+    // which starves render into producing nothing rather than inventing.
+    const note = detag(String(c.note || '')).slice(0, 200);
+    out.push({ sessionId: c.sessionId, rung: c.rung, score, evidence, note });
   }
   return out;
 }
@@ -167,7 +175,7 @@ function promptForRender(candidates) {
   const byId = new Map(RUNGS.map((r) => [r.id, r.label]));
   if (!candidates.length) return '(no qualifying candidates)';
   return candidates
-    .map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}`)
+    .map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}\n   note: ${c.note || '(none)'}`)
     .join('\n');
 }
 
