@@ -119,7 +119,7 @@ export function createApp({ name }) {
         .sb-card-body p:first-child, .sb-card-body h3:first-child { margin-top:8px; }
         .sb-dots { font-size:11px; padding:0 4px; }
         .sb-radial { position:absolute; display:none; width:100px; height:100px; }
-        .sb-radial button { position:absolute; width:30px; height:30px; border-radius:50%; padding:0; font-size:11px; }
+        .sb-radial button { position:absolute; width:36px; height:36px; border-radius:50%; padding:0; font-size:10px; line-height:1; }
         #sb-edges { position:absolute; top:0; left:0; pointer-events:none; }
 
         .sb-popover { position:absolute; display:none; background:var(--bg-elev); border:1px solid var(--border);
@@ -163,8 +163,8 @@ export function createApp({ name }) {
       <div class="sb-canvas" id="sb-canvas">
         <svg id="sb-edges"></svg>
         <div class="sb-radial" id="sb-radial">
-          <button data-action="link" style="left:35px;top:0">🔗</button>
-          <button data-action="delete" style="left:70px;top:35px">🗑</button>
+          <button data-action="link" style="left:32px;top:0" title="Link to another card">Link</button>
+          <button data-action="delete" style="left:64px;top:32px" title="Delete card">Del</button>
         </div>
       </div>
 
