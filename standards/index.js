@@ -13,6 +13,38 @@
  *   override   a rule was excepted too often and needed revision
  */
 
+// ─── PRINCIPLES ─────────────────────────────────────────────────────────────────
+// Cross-cutting judgment calls, not mechanical pass/fail checks — for situations
+// the concrete rules below don't cover yet. Apply these when venturing into a
+// pattern this codebase hasn't done before. Not included in `rules`/`active`:
+// nothing here is meant to be swept or auto-checked, only read and applied.
+// When a principle violation actually happens, promote the specific lesson
+// into a concrete rule below (origin: 'bugfix' or 'rework') so the next agent
+// doesn't have to re-derive the same judgment call from scratch.
+
+export const principles = [
+  {
+    id: 'principle-native-semantics',
+    description: 'Prefer native platform/browser behavior over reimplementing it. If you must override a native element\'s default rendering (<dialog>, <details>, form controls), scope the override to the relevant state (e.g. a [open] selector) rather than applying it unconditionally — native elements often encode meaningful behavior in state-dependent defaults that a blanket override silently destroys.',
+  },
+  {
+    id: 'principle-precedent-first',
+    description: 'Before introducing a new pattern, check whether this codebase already has something similar (a comparable dialog, a comparable API shape) and understand why it works before deviating from it. An existing pattern can be correct in a way that is not obvious until you change it.',
+  },
+  {
+    id: 'principle-verify-state-transitions',
+    description: 'When a feature has more than one state (open/closed, loading/loaded, empty/populated), verify all of them, not just the one you were building toward. A feature that looks right when open and right when populated can still be broken at rest.',
+  },
+  {
+    id: 'principle-minimize-speculative-surface',
+    description: 'When a future need is plausible but not yet real, reserve the seam (a field, a hook point) rather than building the machinery around it. Don\'t add UI, validation, or processing for a capability nothing uses yet.',
+  },
+  {
+    id: 'principle-promote-the-lesson',
+    description: 'When a bug reveals a gap these principles didn\'t cover — or that a rule check would have caught — propose a concrete rule (status: proposed) instead of only fixing the instance. The lesson should outlive the bugfix that produced it.',
+  },
+];
+
 // ─── CODE ─────────────────────────────────────────────────────────────────────
 // Language-level rules: naming, comments, module conventions.
 
@@ -150,6 +182,14 @@ const conventions = [
 // patterns, LLM-session indicators. How things look and behave for the user.
 
 const ui = [
+  {
+    id: 'ui-dialog-open-state',
+    category: 'ui',
+    level: 'error',
+    status: 'active',
+    origin: 'bugfix',
+    description: '<dialog> CSS must not set a non-"none" display value unconditionally — scope it to the [open] attribute selector (e.g. `dialog#x[open] { display:flex }`). The browser\'s native closed-state display:none is what makes a missing/removed open attribute actually hide the element; an unscoped override leaves it permanently visible regardless of .show()/.close(). Found when a sidebar flyout rendered "latched open" with no content from page load, because its layout rule (display:flex) applied whether or not the dialog had been opened.',
+  },
   {
     id: 'ui-dark-theme',
     category: 'ui',
