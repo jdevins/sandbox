@@ -102,12 +102,21 @@ export const DEFAULT_RENDER_SYSTEM =
   'Do not name personal servers, machines, or codebases; refer to "a local tool" or "an internal ' +
   'system". Do not editorialize about how impressive this is — let it speak for itself. No ' +
   '"try-hard" framing, no calling routine work groundbreaking.\n\n' +
-  'If a final "(leftover, titles only)" line is given, those sessions did not individually ' +
-  'qualify — write exactly ONE short closing line that abstracts/categorizes them as a group ' +
-  '(e.g. "Also: a few routine maintenance and cleanup tasks."). Do not list their titles, do not ' +
-  'describe them one by one, and spend minimal effort here — this is a flat-rate mention, not ' +
-  'another sold item.\n\n' +
   'Format: plain text, one item per line, ordered as given. No markdown, no headers.';
+
+// Deliberately isolated from the candidate list above — a combined prompt
+// risked the model pattern-matching the surrounding labeled fields
+// (category/evidence/note) and inventing similar "facts" (dates, counts,
+// session ids) for this line too. Kept as its own minimal, label-free call.
+export const DEFAULT_HEAP_SYSTEM =
+  'You write one short closing line summarizing a list of session titles that did not ' +
+  'individually qualify for a highlight list — they are routine, minor, or otherwise not worth ' +
+  'selling individually. Write ONE sentence that abstracts/categorizes them as a group (e.g. ' +
+  '"A few routine maintenance and cleanup tasks."). Minimal effort: this is a flat-rate mention, ' +
+  'not another sold item.\n\n' +
+  'Do not list or enumerate the titles. Do not mention dates, counts, session identifiers, or ' +
+  'any other metadata — describe only what kind of work it was, in plain language. Plain text, ' +
+  'one sentence, no markdown.';
 
 // Fail-safe JSON extraction for the score stage — a malformed or non-JSON
 // reply must never be reinterpreted as prose and passed downstream; treat it
@@ -218,27 +227,31 @@ function selectWithQuota(validated, day, config) {
   return { selected, remainingSessions };
 }
 
-// `remainingTitles`, when given, asks the render call to fold one abstracted
-// closing line for the leftover heap into the same response — no second LLM
-// call, and crucially no per-item listing (that's what made the old
-// title-dump version read as raw data instead of a description).
-function promptForRender(candidates, remainingTitles = []) {
+function promptForRender(candidates) {
   const byId = new Map(RUNGS.map((r) => [r.id, r.label]));
-  const lines = candidates.length
-    ? candidates.map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}\n   note: ${c.note || '(none)'}`)
-    : [];
-  if (remainingTitles.length) {
-    lines.push(`(leftover, titles only — do not enumerate, write one abstracted line): ${remainingTitles.join(' | ')}`);
-  }
-  return lines.length ? lines.join('\n') : '(no qualifying candidates)';
+  if (!candidates.length) return '(no qualifying candidates)';
+  return candidates
+    .map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}\n   note: ${c.note || '(none)'}`)
+    .join('\n');
 }
 
-// Zero-cost fallback for the rare day with no candidates at all (no render
-// call happens, so no LLM abstraction is available either) — a plain count,
-// never raw titles, so even the cheapest path doesn't read as a data dump.
-function remainingHeapLine(remainingSessions) {
+// A title can fall back to a bare session-id fragment (repackSession, when
+// there's no AI title and no usable first prompt) — feeding that to a model
+// reads as an identifier to report, not a description. Drop anything that's
+// just hex/uuid-shaped before it reaches a prompt.
+const ID_LIKE_TITLE_RE = /^[0-9a-f-]{6,}$/i;
+const safeTitle = (t) => (ID_LIKE_TITLE_RE.test(String(t || '').trim()) ? 'an untitled session' : t);
+
+// Separate, minimal LLM call for the leftover heap — isolated from the
+// candidate list's labeled category/evidence/note fields so the model has
+// nothing structured nearby to pattern-match into inventing similar "facts"
+// (dates, counts, ids) of its own for this line.
+async function renderHeapLine(remainingSessions, provider, config) {
   if (!remainingSessions.length) return '';
-  return `Also: ${remainingSessions.length} routine session${remainingSessions.length === 1 ? '' : 's'}, nothing individually notable.`;
+  const titles = remainingSessions.map((s) => safeTitle(s.title));
+  const system = INERT_CONTENT_NOTE + (config.heapPrompt || DEFAULT_HEAP_SYSTEM);
+  const reply = await provider.complete({ system, prompt: titles.join('\n') });
+  return (reply.text || '').trim();
 }
 
 /**
@@ -258,20 +271,13 @@ export async function summarizeDayStructured(day, provider, config = {}) {
   let renderUsage = null;
   let renderMeta = { provider: scoreReply.provider, model: scoreReply.model };
   if (selected.length) {
-    // Leftover titles ride along in the same call so the heap gets one
-    // abstracted line instead of a raw title-dump built without any LLM
-    // involvement — no extra cost, just a richer prompt for the one call
-    // that was already happening.
-    const remainingTitles = remainingSessions.map((s) => s.title);
     const renderSystem = INERT_CONTENT_NOTE + (config.renderPrompt || DEFAULT_RENDER_SYSTEM);
-    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected, remainingTitles) });
+    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected) });
     renderedText = (renderReply.text || '').trim();
     renderUsage = renderReply.usage;
     renderMeta = { provider: renderReply.provider, model: renderReply.model };
   }
-  // Only reached when selected is empty (no candidates at all that day) —
-  // render never ran, so this is the one place still built without an LLM.
-  const heapLine = selected.length ? '' : remainingHeapLine(remainingSessions);
+  const heapLine = await renderHeapLine(remainingSessions, provider, config);
 
   day.summary = [renderedText, heapLine].filter(Boolean).join('\n') || 'No sessions today.';
   day.summaryAt = new Date().toISOString();
