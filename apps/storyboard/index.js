@@ -16,7 +16,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.1.2',
+  version: '0.1.3',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -191,7 +191,7 @@ export function createApp({ name }) {
         const BOARD_ID = ${JSON.stringify(board.id)};
         const GRID = ${GRID};
       </script>
-      <script src="${base}/assets/canvas.js"></script>
+      <script src="${base}/assets/canvas.js?v=${LOADED_AT}"></script>
       ${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}
     </body></html>`);
   });
