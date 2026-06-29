@@ -102,6 +102,11 @@ export const DEFAULT_RENDER_SYSTEM =
   'Do not name personal servers, machines, or codebases; refer to "a local tool" or "an internal ' +
   'system". Do not editorialize about how impressive this is — let it speak for itself. No ' +
   '"try-hard" framing, no calling routine work groundbreaking.\n\n' +
+  'If a final "(leftover, titles only)" line is given, those sessions did not individually ' +
+  'qualify — write exactly ONE short closing line that abstracts/categorizes them as a group ' +
+  '(e.g. "Also: a few routine maintenance and cleanup tasks."). Do not list their titles, do not ' +
+  'describe them one by one, and spend minimal effort here — this is a flat-rate mention, not ' +
+  'another sold item.\n\n' +
   'Format: plain text, one item per line, ordered as given. No markdown, no headers.';
 
 // Fail-safe JSON extraction for the score stage — a malformed or non-JSON
@@ -213,23 +218,27 @@ function selectWithQuota(validated, day, config) {
   return { selected, remainingSessions };
 }
 
-function promptForRender(candidates) {
+// `remainingTitles`, when given, asks the render call to fold one abstracted
+// closing line for the leftover heap into the same response — no second LLM
+// call, and crucially no per-item listing (that's what made the old
+// title-dump version read as raw data instead of a description).
+function promptForRender(candidates, remainingTitles = []) {
   const byId = new Map(RUNGS.map((r) => [r.id, r.label]));
-  if (!candidates.length) return '(no qualifying candidates)';
-  return candidates
-    .map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}\n   note: ${c.note || '(none)'}`)
-    .join('\n');
+  const lines = candidates.length
+    ? candidates.map((c, i) => `${i + 1}. category: ${byId.get(c.rung)}\n   evidence: ${c.evidence}\n   note: ${c.note || '(none)'}`)
+    : [];
+  if (remainingTitles.length) {
+    lines.push(`(leftover, titles only — do not enumerate, write one abstracted line): ${remainingTitles.join(' | ')}`);
+  }
+  return lines.length ? lines.join('\n') : '(no qualifying candidates)';
 }
 
-// Zero-cost, zero-judgment closer for whatever didn't get individually sold —
-// built straight from repack data, no LLM call. This is the literal "flat
-// rate" for the rest of the heap: same line shape every day, no effort spent
-// making it sound like more than it is.
+// Zero-cost fallback for the rare day with no candidates at all (no render
+// call happens, so no LLM abstraction is available either) — a plain count,
+// never raw titles, so even the cheapest path doesn't read as a data dump.
 function remainingHeapLine(remainingSessions) {
   if (!remainingSessions.length) return '';
-  const titles = remainingSessions.slice(0, 6).map((s) => s.title).join(', ');
-  const extra = remainingSessions.length > 6 ? ` +${remainingSessions.length - 6} more` : '';
-  return `Also: ${remainingSessions.length} other session${remainingSessions.length === 1 ? '' : 's'} — ${titles}${extra}.`;
+  return `Also: ${remainingSessions.length} routine session${remainingSessions.length === 1 ? '' : 's'}, nothing individually notable.`;
 }
 
 /**
@@ -245,19 +254,26 @@ export async function summarizeDayStructured(day, provider, config = {}) {
   const validated = validateCandidates(raw, day);
   const { selected, remainingSessions } = selectWithQuota(validated, day, config);
 
-  let soldText = '';
+  let renderedText = '';
   let renderUsage = null;
   let renderMeta = { provider: scoreReply.provider, model: scoreReply.model };
   if (selected.length) {
+    // Leftover titles ride along in the same call so the heap gets one
+    // abstracted line instead of a raw title-dump built without any LLM
+    // involvement — no extra cost, just a richer prompt for the one call
+    // that was already happening.
+    const remainingTitles = remainingSessions.map((s) => s.title);
     const renderSystem = INERT_CONTENT_NOTE + (config.renderPrompt || DEFAULT_RENDER_SYSTEM);
-    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected) });
-    soldText = (renderReply.text || '').trim();
+    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected, remainingTitles) });
+    renderedText = (renderReply.text || '').trim();
     renderUsage = renderReply.usage;
     renderMeta = { provider: renderReply.provider, model: renderReply.model };
   }
-  const heapLine = remainingHeapLine(remainingSessions);
+  // Only reached when selected is empty (no candidates at all that day) —
+  // render never ran, so this is the one place still built without an LLM.
+  const heapLine = selected.length ? '' : remainingHeapLine(remainingSessions);
 
-  day.summary = [soldText, heapLine].filter(Boolean).join('\n') || 'No sessions today.';
+  day.summary = [renderedText, heapLine].filter(Boolean).join('\n') || 'No sessions today.';
   day.summaryAt = new Date().toISOString();
   day.summaryMeta = {
     ...renderMeta,
