@@ -16,7 +16,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.1.3',
+  version: '0.1.4',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -128,7 +128,8 @@ export function createApp({ name }) {
 
         dialog#sb-add-dialog { position:fixed; top:0; right:0; left:auto; margin:0; height:100vh; max-height:100vh;
           width:420px; max-width:90vw; background:var(--bg-elev); color:var(--text); border:0; border-left:1px solid var(--border);
-          border-radius:0; padding:0; display:flex; flex-direction:column; }
+          border-radius:0; padding:0; }
+        dialog#sb-add-dialog[open] { display:flex; flex-direction:column; }
         dialog#sb-add-dialog::backdrop { background:rgba(0,0,0,0.4); }
         .sb-flyout-head { padding:16px 18px; border-bottom:1px solid var(--border); flex:none; }
         .sb-flyout-body { flex:1; overflow:auto; padding:0 18px; }
