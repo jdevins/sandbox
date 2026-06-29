@@ -121,13 +121,43 @@ export function createApp({ name }) {
         .sb-radial { position:absolute; display:none; width:100px; height:100px; }
         .sb-radial button { position:absolute; width:30px; height:30px; border-radius:50%; padding:0; font-size:11px; }
         #sb-edges { position:absolute; top:0; left:0; pointer-events:none; }
+
+        .sb-popover { position:absolute; display:none; background:var(--bg-elev); border:1px solid var(--border);
+          border-radius:8px; padding:6px; flex-direction:column; gap:2px; z-index:20; min-width:160px; }
+        .sb-popover button { text-align:left; }
+
+        dialog#sb-add-dialog { position:fixed; top:0; right:0; left:auto; margin:0; height:100vh; max-height:100vh;
+          width:420px; max-width:90vw; background:var(--bg-elev); color:var(--text); border:0; border-left:1px solid var(--border);
+          border-radius:0; padding:0; display:flex; flex-direction:column; }
+        dialog#sb-add-dialog::backdrop { background:rgba(0,0,0,0.4); }
+        .sb-flyout-head { padding:16px 18px; border-bottom:1px solid var(--border); flex:none; }
+        .sb-flyout-body { flex:1; overflow:auto; padding:0 18px; }
+        .sb-flyout-foot { padding:14px 18px; border-top:1px solid var(--border); flex:none; }
+        .sb-kind-list { display:flex; flex-direction:column; gap:6px; margin:14px 0; }
+        .sb-kind-tile { text-align:left; padding:10px 12px; border:1px solid var(--border); border-radius:8px;
+          background:var(--bg-elev-2); cursor:pointer; color:var(--text); display:flex; flex-direction:column; gap:2px; }
+        .sb-kind-tile:hover { border-color:var(--accent); }
+        .sb-kind-tile.selected { border-color:var(--accent); background:var(--accent-dim); }
+        .sb-kind-tile .k-id { font-weight:600; font-size:13px; }
+        .sb-kind-tile .k-desc { font-size:11px; color:var(--text-dim); line-height:1.4; }
+        .sb-detail-section { margin-top:18px; }
+        .sb-detail-section h4 { font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--text-dim); margin:0 0 8px; }
+        .sb-field { margin-bottom:10px; }
+        .sb-field label { display:block; font-size:12px; color:var(--text-dim); margin-bottom:4px; }
+        .sb-field input, .sb-field textarea { width:100%; background:var(--bg-elev-2); color:var(--text);
+          border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; box-sizing:border-box; }
+        .sb-field textarea { min-height:70px; font-family:var(--mono); font-size:12px; }
+        .sb-dialog-error { color:var(--bad); font-size:12px; margin-top:8px; }
       </style>
     </head><body>
       <div class="sb-toolbar">
         <div><strong>${esc(board.name)}</strong> <a class="muted" href="${base}">← boards</a></div>
-        <div class="row">
+        <div class="row" style="position:relative">
           <span class="muted" id="sb-link-hint" style="display:none;font-size:12px">Click a card to link to…</span>
-          <button class="btn" id="sb-add">+ add card</button>
+          <button class="btn" id="sb-board-menu-btn">⋯ board</button>
+          <div class="sb-popover" id="sb-board-menu">
+            <button type="button" class="btn" data-action="add-card">+ Add card</button>
+          </div>
         </div>
       </div>
       <div class="sb-canvas" id="sb-canvas">
@@ -137,6 +167,25 @@ export function createApp({ name }) {
           <button data-action="delete" style="left:70px;top:35px">🗑</button>
         </div>
       </div>
+
+      <dialog id="sb-add-dialog">
+        <div class="sb-flyout-head">
+          <h3 style="margin:0 0 4px">Add card</h3>
+          <p class="muted" style="font-size:12px;margin:0">Pick a kind, then fill it in.</p>
+        </div>
+        <div class="sb-flyout-body">
+          <div class="sb-kind-list" id="sb-kind-grid"></div>
+          <div id="sb-kind-detail"></div>
+        </div>
+        <div class="sb-flyout-foot">
+          <div class="sb-dialog-error" id="sb-add-error" hidden></div>
+          <div class="row" style="justify-content:flex-end;gap:8px">
+            <button type="button" class="btn" id="sb-add-cancel">Cancel</button>
+            <button type="button" class="btn primary" id="sb-add-create" disabled>Create</button>
+          </div>
+        </div>
+      </dialog>
+
       <script>
         const BASE = ${JSON.stringify(base)};
         const BOARD_ID = ${JSON.stringify(board.id)};

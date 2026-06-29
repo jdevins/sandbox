@@ -4,6 +4,10 @@ export const definition = {
   id: 'markdown',
   description: 'Renders markdown text. Supports headers, bold, italic, inline code, fenced code blocks, links, and bullet lists.',
   payloadSchema: { text: 'string' },
+  // Declared now so the contract shape doesn't change later when a kind
+  // actually needs one — empty/none until a real kind populates them.
+  optionsSchema: {},
+  hooks: [],
   exampleCard: { kind: 'markdown', payload: { text: '# Heading\n\nSome **bold** and *italic* text.\n\n- one\n- two' } },
   actions: ['delete'],
   renderMode: 'inline',

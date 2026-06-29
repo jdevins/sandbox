@@ -169,28 +169,129 @@
     }
   });
 
-  document.getElementById('sb-add').addEventListener('click', () => {
+  // ── Board action menu (popover, not a native dropdown) ───────────────────
+  const boardMenuBtn = document.getElementById('sb-board-menu-btn');
+  const boardMenu = document.getElementById('sb-board-menu');
+
+  boardMenuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = boardMenu.style.display === 'flex';
+    boardMenu.style.display = open ? 'none' : 'flex';
+    boardMenu.style.left = '0px';
+    boardMenu.style.top = '100%';
+  });
+  boardMenu.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    boardMenu.style.display = 'none';
+    if (btn.dataset.action === 'add-card') openAddDialog();
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#sb-board-menu') && !e.target.closest('#sb-board-menu-btn')) {
+      boardMenu.style.display = 'none';
+    }
+  });
+
+  // ── Add-card flyout: kind list (click, not type/select) + per-kind detail ─
+  // The kind contract has optionsSchema/hooks reserved for later (see card-kind
+  // modules) — sections for them only render once a kind actually populates one,
+  // so "add a card" doesn't show empty ceremony for kinds that don't need it.
+  const addDialog = document.getElementById('sb-add-dialog');
+  const kindGrid = document.getElementById('sb-kind-grid');
+  const detailEl = document.getElementById('sb-kind-detail');
+  const addError = document.getElementById('sb-add-error');
+  const addCreateBtn = document.getElementById('sb-add-create');
+  let selectedKind = null;
+
+  function openAddDialog() {
     if (!contract) return;
-    const kindId = prompt('Card kind: ' + contract.kinds.map((k) => k.id).join(', '), contract.kinds[0].id);
-    const kind = contract.kinds.find((k) => k.id === kindId);
-    if (!kind) return;
-    const payloadText = prompt('Payload JSON:', JSON.stringify(kind.exampleCard.payload));
+    selectedKind = null;
+    addError.hidden = true;
+    addCreateBtn.disabled = true;
+    detailEl.innerHTML = '';
+    kindGrid.innerHTML = contract.kinds
+      .map((k) => `<button type="button" class="sb-kind-tile" data-kind="${k.id}">
+        <div class="k-id">${k.id}</div><div class="k-desc">${k.description}</div></button>`)
+      .join('');
+    addDialog.showModal();
+  }
+
+  function fieldHtml(key, type, value) {
+    const isLong = type === 'any' || key === 'text' || key === 'html';
+    const tag = isLong ? 'textarea' : 'input';
+    const val = type === 'any' ? JSON.stringify(value, null, 2) : (value ?? '');
+    return `<div class="sb-field"><label>${key}${type === 'any' ? ' (JSON)' : ''}</label>
+      <${tag} data-field="${key}" data-type="${type}">${val}</${tag}></div>`;
+  }
+
+  function renderDetail(kind) {
+    const example = kind.exampleCard.payload || {};
+    const contentFields = Object.keys(kind.payloadSchema || {})
+      .map((key) => fieldHtml(key, kind.payloadSchema[key], example[key]))
+      .join('');
+    const optionsKeys = Object.keys(kind.optionsSchema || {});
+    const optionsSection = optionsKeys.length
+      ? `<div class="sb-detail-section"><h4>Options</h4>${optionsKeys.map((k) => fieldHtml(k, kind.optionsSchema[k])).join('')}</div>`
+      : '';
+    const hooksSection = (kind.hooks || []).length
+      ? `<div class="sb-detail-section"><h4>Hooks</h4>${kind.hooks.map((h) => `<span class="badge">${h}</span>`).join(' ')}</div>`
+      : '';
+    detailEl.innerHTML = `
+      <div class="sb-detail-section"><h4>Use</h4><p class="muted" style="font-size:13px;margin:0">${kind.description}</p></div>
+      <div class="sb-detail-section"><h4>Core contents</h4>${contentFields}</div>
+      ${optionsSection}${hooksSection}`;
+  }
+
+  function collectPayload(kind) {
+    const payload = {};
+    const schema = kind.payloadSchema || {};
+    Object.keys(schema).forEach((key) => {
+      const field = detailEl.querySelector(`[data-field="${key}"]`);
+      payload[key] = schema[key] === 'any' ? JSON.parse(field.value) : field.value;
+    });
+    return payload;
+  }
+
+  kindGrid.addEventListener('click', (e) => {
+    const tile = e.target.closest('.sb-kind-tile');
+    if (!tile) return;
+    kindGrid.querySelectorAll('.sb-kind-tile').forEach((t) => t.classList.remove('selected'));
+    tile.classList.add('selected');
+    selectedKind = contract.kinds.find((k) => k.id === tile.dataset.kind);
+    renderDetail(selectedKind);
+    addCreateBtn.disabled = false;
+    addError.hidden = true;
+  });
+
+  document.getElementById('sb-add-cancel').addEventListener('click', () => addDialog.close());
+
+  addCreateBtn.addEventListener('click', () => {
+    if (!selectedKind) return;
     let payload;
     try {
-      payload = JSON.parse(payloadText);
-    } catch {
-      alert('Invalid JSON.');
+      payload = collectPayload(selectedKind);
+    } catch (err) {
+      addError.textContent = 'Invalid JSON in a field: ' + err.message;
+      addError.hidden = false;
       return;
     }
+    const x = Math.round((canvas.scrollLeft + 40) / GRID) * GRID;
+    const y = Math.round((canvas.scrollTop + 40) / GRID) * GRID;
     api(`/api/boards/${BOARD_ID}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: kindId, x: 40, y: 40, payload }),
-    }).then((card) => {
-      cards.push(card);
-      mountCard(card);
-      drawEdges();
-    });
+      body: JSON.stringify({ kind: selectedKind.id, x, y, payload }),
+    })
+      .then((card) => {
+        cards.push(card);
+        mountCard(card);
+        drawEdges();
+        addDialog.close();
+      })
+      .catch(() => {
+        addError.textContent = 'Failed to create card.';
+        addError.hidden = false;
+      });
   });
 
   Promise.all([

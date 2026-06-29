@@ -2,6 +2,8 @@ export const definition = {
   id: 'html',
   description: 'Arbitrary HTML fragment, mounted in a sandboxed iframe. Escape hatch for anything not covered by a structured kind — prefer markdown/json when the content fits those shapes.',
   payloadSchema: { html: 'string' },
+  optionsSchema: {},
+  hooks: [],
   exampleCard: { kind: 'html', payload: { html: '<p>Hello from a card.</p>' } },
   actions: ['delete'],
   renderMode: 'sandboxed',

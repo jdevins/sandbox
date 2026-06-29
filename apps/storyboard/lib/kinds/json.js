@@ -4,6 +4,8 @@ export const definition = {
   id: 'json',
   description: 'Displays a JSON value as formatted, scrollable text. Use for sample payloads, API responses, config snippets.',
   payloadSchema: { value: 'any' },
+  optionsSchema: {},
+  hooks: [],
   exampleCard: { kind: 'json', payload: { value: { hello: 'world' } } },
   actions: ['delete'],
   renderMode: 'inline',
