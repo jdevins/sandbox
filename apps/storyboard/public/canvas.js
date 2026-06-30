@@ -1,5 +1,6 @@
 (function () {
   const canvas = document.getElementById('sb-canvas');
+  const zoomLayer = document.getElementById('sb-zoom-layer');
   const edgesSvg = document.getElementById('sb-edges');
   const radial = document.getElementById('sb-radial');
   let contract = null;
@@ -9,8 +10,49 @@
   let radialFor = null;
   let portDrag = null;   // { fromCard, fromEl, x1, y1 }
   let selectedEdge = null;
+  let zoom = 1;
 
-  const KIND_ICONS = { markdown: '¶', json: '{}', html: '<>', xml: '</>' };
+  // ── Zoom ─────────────────────────────────────────────────────────────────
+  function toModel(clientX, clientY) {
+    const c = canvas.getBoundingClientRect();
+    return { x: (clientX - c.left + canvas.scrollLeft) / zoom, y: (clientY - c.top + canvas.scrollTop) / zoom };
+  }
+
+  function updateLayerSize() {
+    const maxX = Math.max(1000, canvas.clientWidth / zoom, ...cards.map((c) => c.x + (c.w || 200) + 300));
+    const maxY = Math.max(700, canvas.clientHeight / zoom, ...cards.map((c) => c.y + (c.h || 120) + 300));
+    zoomLayer.style.width = maxX + 'px';
+    zoomLayer.style.height = maxY + 'px';
+    edgesSvg.setAttribute('width', maxX);
+    edgesSvg.setAttribute('height', maxY);
+  }
+
+  const zoomLabel = document.getElementById('sb-zoom-reset');
+
+  function zoomAt(newZoom, clientX, clientY) {
+    const c = canvas.getBoundingClientRect();
+    const cx = clientX ?? (c.left + canvas.clientWidth / 2);
+    const cy = clientY ?? (c.top + canvas.clientHeight / 2);
+    const before = toModel(cx, cy);
+    zoom = Math.min(2, Math.max(0.25, newZoom));
+    zoomLayer.style.transform = `scale(${zoom})`;
+    updateLayerSize();
+    canvas.scrollLeft = before.x * zoom - (cx - c.left);
+    canvas.scrollTop = before.y * zoom - (cy - c.top);
+    zoomLabel.textContent = Math.round(zoom * 100) + '%';
+    drawEdges();
+  }
+
+  document.getElementById('sb-zoom-in').addEventListener('click', () => zoomAt(zoom + 0.1));
+  document.getElementById('sb-zoom-out').addEventListener('click', () => zoomAt(zoom - 0.1));
+  zoomLabel.addEventListener('click', () => zoomAt(1));
+  canvas.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    zoomAt(zoom * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY);
+  }, { passive: false });
+
+  const KIND_ICONS = { markdown: '¶', json: '{}', html: '<>', xml: '</>', sql: 'DB' };
 
   const api = (path, opts) => fetch(BASE + path, opts).then((r) => (r.status === 204 ? null : r.json()));
 
@@ -21,7 +63,7 @@
 
   const rubberLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
   rubberLine.setAttribute('stroke', 'var(--accent)');
-  rubberLine.setAttribute('stroke-width', '3.5');
+  rubberLine.setAttribute('stroke-width', '2');
   rubberLine.setAttribute('stroke-dasharray', '5 4');
   rubberLine.setAttribute('marker-end', 'url(#sb-arrow)');
   rubberLine.setAttribute('pointer-events', 'none');
@@ -40,7 +82,7 @@
   }
 
   function cardCenter(card) {
-    return { x: card.x + card.w / 2, y: card.y + card.h / 2 };
+    return { x: card.x + (card.w || 200) / 2, y: card.y + (card.h || 120) / 2 };
   }
 
   // Port positions in canvas coords
@@ -52,20 +94,34 @@
     if (side === 'left')   return { x: card.x,         y: card.y + h / 2 };
   }
 
+  // Single-bend elbow path (axis-aligned) with a slightly rounded corner.
+  function elbowPath(x1, y1, x2, y2, r = 12) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const [cx, cy] = Math.abs(dx) >= Math.abs(dy) ? [x2, y1] : [x1, y2];
+    const seg1 = Math.hypot(cx - x1, cy - y1);
+    const seg2 = Math.hypot(x2 - cx, y2 - cy);
+    const rr = Math.min(r, seg1, seg2);
+    if (rr < 1) return { d: `M${x1},${y1} L${cx},${cy} L${x2},${y2}`, mx: cx, my: cy };
+    const t1x = cx + (x1 - cx) * (rr / seg1);
+    const t1y = cy + (y1 - cy) * (rr / seg1);
+    const t2x = cx + (x2 - cx) * (rr / seg2);
+    const t2y = cy + (y2 - cy) * (rr / seg2);
+    return { d: `M${x1},${y1} L${t1x},${t1y} Q${cx},${cy} ${t2x},${t2y} L${x2},${y2}`, mx: cx, my: cy };
+  }
+
   // ── Edges ────────────────────────────────────────────────────────────────
   function drawEdges() {
-    edgesSvg.setAttribute('width', canvas.scrollWidth);
-    edgesSvg.setAttribute('height', canvas.scrollHeight);
+    updateLayerSize();
 
     // Ensure defs exist (only once)
     if (!edgesSvg.querySelector('defs')) {
       const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
       defs.innerHTML = `
-        <marker id="sb-arrow" markerWidth="16" markerHeight="16" refX="10" refY="6" orient="auto">
-          <path d="M0,0 L0,12 L13,6 z" fill="var(--text-dim)"/>
+        <marker id="sb-arrow" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L0,8 L9,4 z" fill="var(--text-dim)"/>
         </marker>
-        <marker id="sb-arrow-sel" markerWidth="16" markerHeight="16" refX="10" refY="6" orient="auto">
-          <path d="M0,0 L0,12 L13,6 z" fill="var(--accent)"/>
+        <marker id="sb-arrow-sel" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L0,8 L9,4 z" fill="var(--accent)"/>
         </marker>`;
       edgesSvg.insertBefore(defs, edgesGroup);
     }
@@ -76,18 +132,17 @@
       if (!a || !b) return '';
       const pa = cardCenter(a);
       const pb = cardCenter(b);
-      const mx = (pa.x + pb.x) / 2;
-      const my = (pa.y + pb.y) / 2;
+      const { d, mx, my } = elbowPath(pa.x, pa.y, pb.x, pb.y);
       const sel = selectedEdge === e.id;
       const col = sel ? 'var(--accent)' : 'var(--text-dim)';
       const marker = sel ? 'url(#sb-arrow-sel)' : 'url(#sb-arrow)';
       return `
-        <line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}"
-          stroke="transparent" stroke-width="14" style="cursor:pointer" data-edge="${e.id}"/>
-        <line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}"
-          stroke="${col}" stroke-width="${sel ? 4 : 3.5}" marker-end="${marker}" pointer-events="none"/>
+        <path d="${d}" fill="none"
+          stroke="transparent" stroke-width="14" style="cursor:pointer" pointer-events="stroke" data-edge="${e.id}"/>
+        <path d="${d}" fill="none"
+          stroke="${col}" stroke-width="${sel ? 2.5 : 2}" stroke-linejoin="round" marker-end="${marker}" pointer-events="none"/>
         ${sel ? `
-          <foreignObject x="${mx - 42}" y="${my - 15}" width="84" height="30" style="overflow:visible">
+          <foreignObject x="${mx - 42}" y="${my - 15}" width="84" height="30" style="overflow:visible;pointer-events:auto">
             <div xmlns="http://www.w3.org/1999/xhtml" class="sb-edge-toolbar">
               <button data-flip-edge="${e.id}" title="Flip direction" type="button">⇄</button>
               <button data-add-edge="${e.id}" title="Insert card here" type="button">+</button>
@@ -187,7 +242,7 @@
       <div class="sb-port" data-side="right" title="Drag to connect">→</div>
       <div class="sb-port" data-side="bottom" title="Drag to connect">↓</div>
       <div class="sb-port" data-side="left" title="Drag to connect">←</div>`;
-    canvas.appendChild(el);
+    zoomLayer.appendChild(el);
 
     renderCardBody(el, card);
     wireDrag(el, card);
@@ -224,15 +279,15 @@
       dragging = true;
       head.setPointerCapture(e.pointerId);
       const r = el.getBoundingClientRect();
-      offX = e.clientX - r.left;
-      offY = e.clientY - r.top;
+      offX = (e.clientX - r.left) / zoom;
+      offY = (e.clientY - r.top) / zoom;
       closeRadial();
     });
     head.addEventListener('pointermove', (e) => {
       if (!dragging) return;
-      const c = canvas.getBoundingClientRect();
-      const x = e.clientX - c.left + canvas.scrollLeft - offX;
-      const y = e.clientY - c.top + canvas.scrollTop - offY;
+      const p = toModel(e.clientX, e.clientY);
+      const x = p.x - offX;
+      const y = p.y - offY;
       el.style.left = x + 'px';
       el.style.top = y + 'px';
       card.x = x;
@@ -275,8 +330,8 @@
     });
     handle.addEventListener('pointermove', (e) => {
       if (!resizing) return;
-      const w = Math.max(GRID * 4, startW + (e.clientX - startX));
-      const h = Math.max(GRID * 3, startH + (e.clientY - startY));
+      const w = Math.max(GRID * 4, startW + (e.clientX - startX) / zoom);
+      const h = Math.max(GRID * 3, startH + (e.clientY - startY) / zoom);
       el.style.width = w + 'px';
       el.style.height = h + 'px';
       card.w = w;
@@ -320,9 +375,9 @@
       });
       port.addEventListener('pointermove', (e) => {
         if (!portDrag) return;
-        const c = canvas.getBoundingClientRect();
-        rubberLine.setAttribute('x2', e.clientX - c.left + canvas.scrollLeft);
-        rubberLine.setAttribute('y2', e.clientY - c.top + canvas.scrollTop);
+        const p = toModel(e.clientX, e.clientY);
+        rubberLine.setAttribute('x2', p.x);
+        rubberLine.setAttribute('y2', p.y);
         const hover = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
         const valid = hover && hover !== portDrag.fromEl;
         if (portDrag.targetEl && portDrag.targetEl !== hover) {
@@ -382,7 +437,7 @@
   }
 
   canvas.addEventListener('pointerdown', (e) => {
-    if (!e.target.closest('.sb-card') && !e.target.closest('.sb-radial')) {
+    if (!e.target.closest('.sb-card') && !e.target.closest('.sb-radial') && !e.target.closest('#sb-edges')) {
       closeRadial();
       setLinkMode(null);
       if (selectedEdge) { selectedEdge = null; drawEdges(); }
@@ -442,7 +497,7 @@
   }
 
   function fieldHtml(key, type, value) {
-    const isLong = type === 'any' || key === 'text' || key === 'html' || key === 'xml';
+    const isLong = type === 'any' || key === 'text' || key === 'html' || key === 'xml' || key === 'sql';
     const tag = isLong ? 'textarea' : 'input';
     const val = type === 'any' ? JSON.stringify(value, null, 2) : (value ?? '');
     return `<div class="sb-field"><label>${key}${type === 'any' ? ' (JSON)' : ''}</label>
@@ -498,8 +553,8 @@
       return;
     }
 
-    const x = Math.round((canvas.scrollLeft + 40) / GRID) * GRID;
-    const y = Math.round((canvas.scrollTop + 40) / GRID) * GRID;
+    const x = Math.round((canvas.scrollLeft / zoom + 40) / GRID) * GRID;
+    const y = Math.round((canvas.scrollTop / zoom + 40) / GRID) * GRID;
     api(`/api/boards/${BOARD_ID}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -63,15 +63,16 @@ export function deleteBoard(id) {
 // kind-shape change can tell old cards from new ones instead of guessing.
 
 function normalizeCard(c) {
+  const defined = Object.fromEntries(Object.entries(c).filter(([, v]) => v !== undefined));
   return {
     schemaVersion: SCHEMA_VERSION,
     w: 180,
     h: 120,
     payload: {},
     createdAt: new Date().toISOString(),
-    ...c,
-    x: snapToGrid(c.x),
-    y: snapToGrid(c.y),
+    ...defined,
+    x: snapToGrid(defined.x),
+    y: snapToGrid(defined.y),
   };
 }
 

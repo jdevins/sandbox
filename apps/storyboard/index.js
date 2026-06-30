@@ -16,7 +16,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.1.6',
+  version: '0.2.1',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -109,6 +109,13 @@ export function createApp({ name }) {
         .sb-toolbar { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); }
         .sb-canvas { position:relative; width:100%; height:calc(100vh - 56px); overflow:auto;
           background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: ${GRID}px ${GRID}px; }
+        .sb-zoom-layer { position:relative; transform-origin: 0 0; }
+        .sb-zoom { display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+        .sb-zoom button { background:var(--bg-elev); color:var(--text); border:0; border-right:1px solid var(--border);
+          padding:5px 9px; font-size:12px; cursor:pointer; line-height:1; }
+        .sb-zoom button:last-child { border-right:0; }
+        .sb-zoom button:hover { background:var(--bg-elev-2); color:var(--accent); }
+        #sb-zoom-reset { font-variant-numeric:tabular-nums; min-width:46px; }
         .sb-card { position:absolute; background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; min-width:80px; min-height:60px; }
         .sb-card.linking { border-color: var(--accent); }
         .sb-card.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
@@ -116,16 +123,18 @@ export function createApp({ name }) {
         .sb-card-head { display:flex; align-items:center; gap:5px; padding:4px 8px; border-bottom:1px solid var(--border); font-size:11px; color:var(--text-dim); cursor:grab; flex:none; user-select:none; border-radius:8px 8px 0 0; overflow:hidden; }
         .sb-kind-icon { font-family:var(--mono); font-size:10px; filter:grayscale(1); opacity:0.55; flex:none; }
         .sb-kind-label { flex:1; }
-        .sb-card-body { flex:1; overflow:auto; font-size:13px; min-height:0; }
-        .sb-port { position:absolute; width:18px; height:18px; display:flex; align-items:center; justify-content:center;
-          font-size:13px; line-height:1; color:var(--text-dim); opacity:0; transition:opacity .12s, color .12s, transform .12s;
-          cursor:crosshair; z-index:6; pointer-events:none; }
-        .sb-card:hover .sb-port { opacity:0.4; pointer-events:auto; }
-        .sb-port:hover { opacity:1 !important; color:var(--accent); transform:scale(1.25); }
-        .sb-port[data-side="top"]    { top:-18px;  left:calc(50% - 9px); }
-        .sb-port[data-side="right"]  { right:-18px; top:calc(50% - 9px); }
-        .sb-port[data-side="bottom"] { bottom:-18px; left:calc(50% - 9px); }
-        .sb-port[data-side="left"]   { left:-18px; top:calc(50% - 9px); }
+        .sb-card-body { flex:1; overflow:auto; font-size:13px; min-height:0; padding:8px; }
+        .sb-card-body:has(iframe) { padding:0; }
+        .sb-port { position:absolute; width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+          font-size:20px; font-weight:700; line-height:1; color:var(--text-dim); opacity:0; transition:opacity .12s, color .12s, transform .12s;
+          cursor:crosshair; z-index:6; pointer-events:none; text-shadow:0 0 4px var(--bg);
+          -webkit-text-stroke: 1.5px currentColor; paint-order: stroke fill; }
+        .sb-card:hover .sb-port { opacity:0.55; pointer-events:auto; }
+        .sb-port:hover { opacity:1 !important; color:var(--accent); transform:scale(1.3); }
+        .sb-port[data-side="top"]    { top:-24px;  left:calc(50% - 13px); }
+        .sb-port[data-side="right"]  { right:-24px; top:calc(50% - 13px); }
+        .sb-port[data-side="bottom"] { bottom:-24px; left:calc(50% - 13px); }
+        .sb-port[data-side="left"]   { left:-24px; top:calc(50% - 13px); }
         .sb-edge-toolbar { display:flex; gap:3px; background:var(--bg-elev-2); border:1px solid var(--border);
           border-radius:8px; padding:3px; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
         .sb-edge-toolbar button { width:24px; height:24px; border-radius:6px; padding:0; font-size:13px; line-height:1;
@@ -133,9 +142,10 @@ export function createApp({ name }) {
         .sb-edge-toolbar button:hover { background:var(--bg-elev); color:var(--accent); }
         .sb-edge-toolbar button.danger:hover { color:var(--bad); }
         .sb-card-body iframe { width:100%; height:100%; border:0; }
-        .sb-code { font-family:var(--mono); font-size:12px; white-space:pre; overflow:auto; margin:0; padding:8px; }
-        .sb-card-body p, .sb-card-body h3, .sb-card-body h4, .sb-card-body ul { margin:0 0 8px; padding:0 8px; }
-        .sb-card-body p:first-child, .sb-card-body h3:first-child { margin-top:8px; }
+        .sb-code { font-family:var(--mono); font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; overflow:auto; margin:0; padding:0; }
+        .sb-card-body p, .sb-card-body h3, .sb-card-body h4, .sb-card-body ul { margin:0 0 8px; padding:0; }
+        .sb-card-body ul { padding-left:18px; }
+        .sb-card-body p:last-child, .sb-card-body h3:last-child, .sb-card-body h4:last-child, .sb-card-body ul:last-child { margin-bottom:0; }
         .sb-dots { font-size:11px; padding:0 4px; flex:none; }
         .sb-resize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:se-resize;
           background:linear-gradient(135deg, transparent 50%, var(--border) 50%); border-bottom-right-radius:8px; }
@@ -183,10 +193,17 @@ export function createApp({ name }) {
           <div class="sb-popover" id="sb-board-menu">
             <button type="button" class="btn" data-action="add-card">+ Add card</button>
           </div>
+          <div class="sb-zoom">
+            <button type="button" id="sb-zoom-out" title="Zoom out">−</button>
+            <button type="button" id="sb-zoom-reset" title="Reset zoom">100%</button>
+            <button type="button" id="sb-zoom-in" title="Zoom in">+</button>
+          </div>
         </div>
       </div>
       <div class="sb-canvas" id="sb-canvas">
-        <svg id="sb-edges"></svg>
+        <div class="sb-zoom-layer" id="sb-zoom-layer">
+          <svg id="sb-edges"></svg>
+        </div>
         <div class="sb-radial" id="sb-radial">
           <button data-action="edit"   style="left:42px;top:0"   title="Edit card contents">Edit</button>
           <button data-action="link"   style="left:84px;top:42px" title="Link to another card">Link</button>

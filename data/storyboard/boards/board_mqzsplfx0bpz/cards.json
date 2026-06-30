@@ -7,10 +7,10 @@
     "createdAt": "2026-06-29T23:23:28.937Z",
     "id": "card_mqzug5d5crar",
     "kind": "markdown",
-    "x": 860,
-    "y": 60,
-    "w": 240,
-    "h": 220
+    "x": 40,
+    "y": 40,
+    "w": 200,
+    "h": 120
   },
   {
     "schemaVersion": 1,
@@ -49,19 +49,19 @@
     "id": "card_mqzw6ga3t8d7",
     "kind": "markdown",
     "x": 540,
-    "y": 320
+    "y": 60
   },
   {
     "schemaVersion": 1,
-    "w": 200,
-    "h": 120,
+    "w": 220,
+    "h": 140,
     "payload": {
       "text": "# Heading\n\nSome **bold** and *italic* text.\n\n- one\n- two"
     },
     "createdAt": "2026-06-30T01:27:19.049Z",
     "id": "card_mqzyveh5g3c7",
     "kind": "markdown",
-    "x": 160,
-    "y": 280
+    "x": 40,
+    "y": 80
   }
 ]
