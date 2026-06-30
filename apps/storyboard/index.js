@@ -16,7 +16,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.1.4',
+  version: '0.1.6',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -109,28 +109,52 @@ export function createApp({ name }) {
         .sb-toolbar { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); }
         .sb-canvas { position:relative; width:100%; height:calc(100vh - 56px); overflow:auto;
           background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: ${GRID}px ${GRID}px; }
-        .sb-card { position:absolute; background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
+        .sb-card { position:absolute; background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; min-width:80px; min-height:60px; }
         .sb-card.linking { border-color: var(--accent); }
-        .sb-card-head { display:flex; justify-content:space-between; align-items:center; padding:4px 8px; border-bottom:1px solid var(--border); font-size:11px; color:var(--text-dim); cursor:grab; flex:none; }
-        .sb-card-body { flex:1; overflow:auto; font-size:13px; }
+        .sb-card.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+        .sb-card.target-highlight { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+        .sb-card-head { display:flex; align-items:center; gap:5px; padding:4px 8px; border-bottom:1px solid var(--border); font-size:11px; color:var(--text-dim); cursor:grab; flex:none; user-select:none; border-radius:8px 8px 0 0; overflow:hidden; }
+        .sb-kind-icon { font-family:var(--mono); font-size:10px; filter:grayscale(1); opacity:0.55; flex:none; }
+        .sb-kind-label { flex:1; }
+        .sb-card-body { flex:1; overflow:auto; font-size:13px; min-height:0; }
+        .sb-port { position:absolute; width:18px; height:18px; display:flex; align-items:center; justify-content:center;
+          font-size:13px; line-height:1; color:var(--text-dim); opacity:0; transition:opacity .12s, color .12s, transform .12s;
+          cursor:crosshair; z-index:6; pointer-events:none; }
+        .sb-card:hover .sb-port { opacity:0.4; pointer-events:auto; }
+        .sb-port:hover { opacity:1 !important; color:var(--accent); transform:scale(1.25); }
+        .sb-port[data-side="top"]    { top:-18px;  left:calc(50% - 9px); }
+        .sb-port[data-side="right"]  { right:-18px; top:calc(50% - 9px); }
+        .sb-port[data-side="bottom"] { bottom:-18px; left:calc(50% - 9px); }
+        .sb-port[data-side="left"]   { left:-18px; top:calc(50% - 9px); }
+        .sb-edge-toolbar { display:flex; gap:3px; background:var(--bg-elev-2); border:1px solid var(--border);
+          border-radius:8px; padding:3px; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
+        .sb-edge-toolbar button { width:24px; height:24px; border-radius:6px; padding:0; font-size:13px; line-height:1;
+          background:transparent; border:0; color:var(--text); cursor:pointer; }
+        .sb-edge-toolbar button:hover { background:var(--bg-elev); color:var(--accent); }
+        .sb-edge-toolbar button.danger:hover { color:var(--bad); }
         .sb-card-body iframe { width:100%; height:100%; border:0; }
         .sb-code { font-family:var(--mono); font-size:12px; white-space:pre; overflow:auto; margin:0; padding:8px; }
         .sb-card-body p, .sb-card-body h3, .sb-card-body h4, .sb-card-body ul { margin:0 0 8px; padding:0 8px; }
         .sb-card-body p:first-child, .sb-card-body h3:first-child { margin-top:8px; }
-        .sb-dots { font-size:11px; padding:0 4px; }
-        .sb-radial { position:absolute; display:none; width:100px; height:100px; }
-        .sb-radial button { position:absolute; width:36px; height:36px; border-radius:50%; padding:0; font-size:10px; line-height:1; }
+        .sb-dots { font-size:11px; padding:0 4px; flex:none; }
+        .sb-resize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:se-resize;
+          background:linear-gradient(135deg, transparent 50%, var(--border) 50%); border-bottom-right-radius:8px; }
+        .sb-resize:hover { background:linear-gradient(135deg, transparent 50%, var(--accent) 50%); }
+        .sb-radial { position:absolute; display:none; width:120px; height:120px; z-index:15; }
+        .sb-radial button { position:absolute; width:36px; height:36px; border-radius:50%; padding:0; font-size:10px; line-height:1;
+          background:var(--bg-elev-2); color:var(--text); border:1px solid var(--border); }
+        .sb-radial button:hover { border-color:var(--accent); color:var(--accent); }
         #sb-edges { position:absolute; top:0; left:0; pointer-events:none; }
 
         .sb-popover { position:absolute; display:none; background:var(--bg-elev); border:1px solid var(--border);
           border-radius:8px; padding:6px; flex-direction:column; gap:2px; z-index:20; min-width:160px; }
         .sb-popover button { text-align:left; }
 
-        dialog#sb-add-dialog { position:fixed; top:0; right:0; left:auto; margin:0; height:100vh; max-height:100vh;
+        dialog#sb-add-dialog, dialog#sb-edit-dialog { position:fixed; top:0; right:0; left:auto; margin:0; height:100vh; max-height:100vh;
           width:420px; max-width:90vw; background:var(--bg-elev); color:var(--text); border:0; border-left:1px solid var(--border);
           border-radius:0; padding:0; }
-        dialog#sb-add-dialog[open] { display:flex; flex-direction:column; }
-        dialog#sb-add-dialog::backdrop { background:rgba(0,0,0,0.4); }
+        dialog#sb-add-dialog[open], dialog#sb-edit-dialog[open] { display:flex; flex-direction:column; }
+        dialog#sb-add-dialog::backdrop, dialog#sb-edit-dialog::backdrop { background:rgba(0,0,0,0.4); }
         .sb-flyout-head { padding:16px 18px; border-bottom:1px solid var(--border); flex:none; }
         .sb-flyout-body { flex:1; overflow:auto; padding:0 18px; }
         .sb-flyout-foot { padding:14px 18px; border-top:1px solid var(--border); flex:none; }
@@ -164,14 +188,15 @@ export function createApp({ name }) {
       <div class="sb-canvas" id="sb-canvas">
         <svg id="sb-edges"></svg>
         <div class="sb-radial" id="sb-radial">
-          <button data-action="link" style="left:32px;top:0" title="Link to another card">Link</button>
-          <button data-action="delete" style="left:64px;top:32px" title="Delete card">Del</button>
+          <button data-action="edit"   style="left:42px;top:0"   title="Edit card contents">Edit</button>
+          <button data-action="link"   style="left:84px;top:42px" title="Link to another card">Link</button>
+          <button data-action="delete" style="left:0;top:42px"   title="Delete card">Del</button>
         </div>
       </div>
 
       <dialog id="sb-add-dialog">
         <div class="sb-flyout-head">
-          <h3 style="margin:0 0 4px">Add card</h3>
+          <h3 style="margin:0 0 4px" id="sb-add-title">Add card</h3>
           <p class="muted" style="font-size:12px;margin:0">Pick a kind, then fill it in.</p>
         </div>
         <div class="sb-flyout-body">
@@ -183,6 +208,23 @@ export function createApp({ name }) {
           <div class="row" style="justify-content:flex-end;gap:8px">
             <button type="button" class="btn" id="sb-add-cancel">Cancel</button>
             <button type="button" class="btn primary" id="sb-add-create" disabled>Create</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="sb-edit-dialog">
+        <div class="sb-flyout-head">
+          <h3 style="margin:0 0 4px">Edit card</h3>
+          <p class="muted" style="font-size:12px;margin:0">Update the card contents below.</p>
+        </div>
+        <div class="sb-flyout-body">
+          <div id="sb-edit-detail"></div>
+        </div>
+        <div class="sb-flyout-foot">
+          <div class="sb-dialog-error" id="sb-edit-error" hidden></div>
+          <div class="row" style="justify-content:flex-end;gap:8px">
+            <button type="button" class="btn" id="sb-edit-cancel">Cancel</button>
+            <button type="button" class="btn primary" id="sb-edit-save">Save</button>
           </div>
         </div>
       </dialog>
@@ -201,7 +243,14 @@ export function createApp({ name }) {
 
   // ── Agent-facing contract ───────────────────────────────────────────────
   router.get('/api/contract', (req, res) => {
-    res.json({ grid: GRID, kinds: listDefinitions(), coreActions: ['delete', 'link'] });
+    res.json({
+      grid: GRID,
+      kinds: listDefinitions(),
+      coreActions: ['delete', 'link'],
+      endpoints: {
+        layout: `POST /api/boards/:id/layout — batch create cards+edges. Body: { cards:[{kind,payload,x?,y?,w?,h?}], edges:[{from:0,to:1}], layout:'flow'|'grid', startX?,startY?,gapX?,gapY? }`,
+      },
+    });
   });
 
   // ── Boards API ──────────────────────────────────────────────────────────
@@ -215,6 +264,52 @@ export function createApp({ name }) {
     const { kind, x, y, w, h, payload } = req.body || {};
     if (!getKind(kind)) return res.status(400).json({ error: `Unknown kind "${kind}"` });
     res.status(201).json(createCard(req.params.id, { kind, x, y, w, h, payload }));
+  });
+
+  // ── Batch layout ─────────────────────────────────────────────────────────
+  // POST { cards: [{kind, payload, x?, y?, w?, h?}], edges?: [{from:0,to:1}],
+  //        layout?: 'flow'|'grid', startX?, startY?, gapX?, gapY? }
+  // Cards without x/y are auto-placed. edges[].from/to are array indices.
+  router.post('/api/boards/:id/layout', (req, res) => {
+    const {
+      cards: specs = [],
+      edges: edgeSpecs = [],
+      layout = 'flow',
+      startX = 40, startY = 40,
+      gapX = 40, gapY = 40,
+    } = req.body || {};
+
+    const DEFAULT_W = 200;
+    const DEFAULT_H = 120;
+    const cols = layout === 'grid' ? Math.max(1, Math.ceil(Math.sqrt(specs.length))) : Infinity;
+
+    const created = [];
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i];
+      if (!getKind(spec.kind)) return res.status(400).json({ error: `Unknown kind "${spec.kind}" at index ${i}` });
+      const w = spec.w || DEFAULT_W;
+      const h = spec.h || DEFAULT_H;
+      let x = spec.x, y = spec.y;
+      if (x === undefined || y === undefined) {
+        if (layout === 'grid') {
+          const col = i % cols;
+          const row = Math.floor(i / cols);
+          x = startX + col * (DEFAULT_W + gapX);
+          y = startY + row * (DEFAULT_H + gapY);
+        } else {
+          const prev = created[i - 1];
+          x = prev ? prev.x + prev.w + gapX : startX;
+          y = startY;
+        }
+      }
+      created.push(createCard(req.params.id, { kind: spec.kind, x, y, w, h, payload: spec.payload || {} }));
+    }
+
+    const createdEdges = edgeSpecs
+      .filter((s) => s.from >= 0 && s.to >= 0 && s.from < created.length && s.to < created.length)
+      .map((s) => createEdge(req.params.id, { from: created[s.from].id, to: created[s.to].id, kind: s.kind || 'link' }));
+
+    res.status(201).json({ cards: created, edges: createdEdges });
   });
 
   router.patch('/api/boards/:id/cards/:cardId', (req, res) => {

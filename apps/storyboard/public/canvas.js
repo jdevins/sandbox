@@ -5,10 +5,28 @@
   let contract = null;
   let cards = [];
   let edges = [];
-  let linkMode = null; // card id being linked from, or null
+  let linkMode = null;
   let radialFor = null;
+  let portDrag = null;   // { fromCard, fromEl, x1, y1 }
+  let selectedEdge = null;
+
+  const KIND_ICONS = { markdown: '¶', json: '{}', html: '<>', xml: '</>' };
 
   const api = (path, opts) => fetch(BASE + path, opts).then((r) => (r.status === 204 ? null : r.json()));
+
+  // ── SVG setup ────────────────────────────────────────────────────────────
+  const edgesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  edgesGroup.id = 'sb-edges-content';
+  edgesSvg.appendChild(edgesGroup);
+
+  const rubberLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  rubberLine.setAttribute('stroke', 'var(--accent)');
+  rubberLine.setAttribute('stroke-width', '3.5');
+  rubberLine.setAttribute('stroke-dasharray', '5 4');
+  rubberLine.setAttribute('marker-end', 'url(#sb-arrow)');
+  rubberLine.setAttribute('pointer-events', 'none');
+  rubberLine.style.display = 'none';
+  edgesSvg.appendChild(rubberLine);
 
   function closeRadial() {
     radial.style.display = 'none';
@@ -25,39 +43,117 @@
     return { x: card.x + card.w / 2, y: card.y + card.h / 2 };
   }
 
+  // Port positions in canvas coords
+  function portCoords(card, side) {
+    const w = card.w || 200, h = card.h || 120;
+    if (side === 'top')    return { x: card.x + w / 2, y: card.y };
+    if (side === 'right')  return { x: card.x + w,     y: card.y + h / 2 };
+    if (side === 'bottom') return { x: card.x + w / 2, y: card.y + h };
+    if (side === 'left')   return { x: card.x,         y: card.y + h / 2 };
+  }
+
+  // ── Edges ────────────────────────────────────────────────────────────────
   function drawEdges() {
     edgesSvg.setAttribute('width', canvas.scrollWidth);
     edgesSvg.setAttribute('height', canvas.scrollHeight);
-    edgesSvg.innerHTML = edges
-      .map((e) => {
-        const a = cards.find((c) => c.id === e.from);
-        const b = cards.find((c) => c.id === e.to);
-        if (!a || !b) return '';
-        const pa = cardCenter(a);
-        const pb = cardCenter(b);
-        return `<line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke="var(--border)" stroke-width="1.5" />`;
-      })
-      .join('');
+
+    // Ensure defs exist (only once)
+    if (!edgesSvg.querySelector('defs')) {
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      defs.innerHTML = `
+        <marker id="sb-arrow" markerWidth="16" markerHeight="16" refX="10" refY="6" orient="auto">
+          <path d="M0,0 L0,12 L13,6 z" fill="var(--text-dim)"/>
+        </marker>
+        <marker id="sb-arrow-sel" markerWidth="16" markerHeight="16" refX="10" refY="6" orient="auto">
+          <path d="M0,0 L0,12 L13,6 z" fill="var(--accent)"/>
+        </marker>`;
+      edgesSvg.insertBefore(defs, edgesGroup);
+    }
+
+    edgesGroup.innerHTML = edges.map((e) => {
+      const a = cards.find((c) => c.id === e.from);
+      const b = cards.find((c) => c.id === e.to);
+      if (!a || !b) return '';
+      const pa = cardCenter(a);
+      const pb = cardCenter(b);
+      const mx = (pa.x + pb.x) / 2;
+      const my = (pa.y + pb.y) / 2;
+      const sel = selectedEdge === e.id;
+      const col = sel ? 'var(--accent)' : 'var(--text-dim)';
+      const marker = sel ? 'url(#sb-arrow-sel)' : 'url(#sb-arrow)';
+      return `
+        <line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}"
+          stroke="transparent" stroke-width="14" style="cursor:pointer" data-edge="${e.id}"/>
+        <line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}"
+          stroke="${col}" stroke-width="${sel ? 4 : 3.5}" marker-end="${marker}" pointer-events="none"/>
+        ${sel ? `
+          <foreignObject x="${mx - 42}" y="${my - 15}" width="84" height="30" style="overflow:visible">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="sb-edge-toolbar">
+              <button data-flip-edge="${e.id}" title="Flip direction" type="button">⇄</button>
+              <button data-add-edge="${e.id}" title="Insert card here" type="button">+</button>
+              <button data-del-edge="${e.id}" title="Delete connector" type="button" class="danger">×</button>
+            </div>
+          </foreignObject>` : ''}`;
+    }).join('');
+
+    canvas.querySelectorAll('.sb-card.target-highlight').forEach((el) => el.classList.remove('target-highlight'));
+    const selEdge = edges.find((e) => e.id === selectedEdge);
+    if (selEdge) {
+      const toEl = canvas.querySelector(`.sb-card[data-id="${selEdge.to}"]`);
+      if (toEl) toEl.classList.add('target-highlight');
+    }
+
+    edgesGroup.querySelectorAll('[data-edge]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        selectedEdge = selectedEdge === el.dataset.edge ? null : el.dataset.edge;
+        drawEdges();
+      });
+    });
+    edgesGroup.querySelectorAll('[data-del-edge]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = el.dataset.delEdge;
+        api(`/api/boards/${BOARD_ID}/edges/${id}`, { method: 'DELETE' }).then(() => {
+          edges = edges.filter((e) => e.id !== id);
+          selectedEdge = null;
+          drawEdges();
+        });
+      });
+    });
+    edgesGroup.querySelectorAll('[data-flip-edge]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = el.dataset.flipEdge;
+        const edge = edges.find((e) => e.id === id);
+        if (!edge) return;
+        api(`/api/boards/${BOARD_ID}/edges/${id}`, { method: 'DELETE' })
+          .then(() => api(`/api/boards/${BOARD_ID}/edges`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: edge.to, to: edge.from, kind: edge.kind }),
+          }))
+          .then((newEdge) => {
+            edges = edges.filter((e) => e.id !== id);
+            edges.push(newEdge);
+            selectedEdge = newEdge.id;
+            drawEdges();
+          });
+      });
+    });
+    edgesGroup.querySelectorAll('[data-add-edge]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openInsertDialog(el.dataset.addEdge);
+      });
+    });
   }
 
-  function mountCard(card) {
-    const el = document.createElement('div');
-    el.className = 'sb-card';
-    el.dataset.id = card.id;
-    el.style.left = card.x + 'px';
-    el.style.top = card.y + 'px';
-    el.style.width = card.w + 'px';
-    el.style.height = card.h + 'px';
-    el.innerHTML = `
-      <div class="sb-card-head">
-        <span>${card.kind}</span>
-        <button class="sb-dots" type="button">⋯</button>
-      </div>
-      <div class="sb-card-body">loading…</div>`;
-    canvas.appendChild(el);
-
+  // ── Card mounting ────────────────────────────────────────────────────────
+  function renderCardBody(el, card) {
+    const body = el.querySelector('.sb-card-body');
+    body.innerHTML = 'loading…';
     api(`/api/boards/${BOARD_ID}/cards/${card.id}/render`).then((res) => {
-      const body = el.querySelector('.sb-card-body');
       if (res.renderMode === 'sandboxed') {
         const iframe = document.createElement('iframe');
         iframe.sandbox = 'allow-scripts';
@@ -68,8 +164,36 @@
         body.innerHTML = res.html;
       }
     });
+  }
 
+  function mountCard(card) {
+    const el = document.createElement('div');
+    el.className = 'sb-card';
+    el.dataset.id = card.id;
+    el.style.left = card.x + 'px';
+    el.style.top = card.y + 'px';
+    if (card.w) el.style.width = card.w + 'px';
+    if (card.h) el.style.height = card.h + 'px';
+    const icon = KIND_ICONS[card.kind] || '□';
+    el.innerHTML = `
+      <div class="sb-card-head">
+        <span class="sb-kind-icon" aria-hidden="true">${icon}</span>
+        <span class="sb-kind-label">${card.kind}</span>
+        <button class="sb-dots" type="button">⋯</button>
+      </div>
+      <div class="sb-card-body">loading…</div>
+      <div class="sb-resize" title="Drag to resize"></div>
+      <div class="sb-port" data-side="top" title="Drag to connect">↑</div>
+      <div class="sb-port" data-side="right" title="Drag to connect">→</div>
+      <div class="sb-port" data-side="bottom" title="Drag to connect">↓</div>
+      <div class="sb-port" data-side="left" title="Drag to connect">←</div>`;
+    canvas.appendChild(el);
+
+    renderCardBody(el, card);
     wireDrag(el, card);
+    wireResize(el, card);
+    wirePorts(el, card);
+
     el.querySelector('.sb-dots').addEventListener('click', (e) => {
       e.stopPropagation();
       openRadial(el, card);
@@ -90,6 +214,7 @@
     });
   }
 
+  // ── Drag (move card) ─────────────────────────────────────────────────────
   function wireDrag(el, card) {
     const head = el.querySelector('.sb-card-head');
     let dragging = false, offX = 0, offY = 0;
@@ -99,7 +224,6 @@
       dragging = true;
       head.setPointerCapture(e.pointerId);
       const r = el.getBoundingClientRect();
-      const c = canvas.getBoundingClientRect();
       offX = e.clientX - r.left;
       offY = e.clientY - r.top;
       closeRadial();
@@ -134,6 +258,103 @@
     });
   }
 
+  // ── Resize ───────────────────────────────────────────────────────────────
+  function wireResize(el, card) {
+    const handle = el.querySelector('.sb-resize');
+    let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
+
+    handle.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      resizing = true;
+      handle.setPointerCapture(e.pointerId);
+      startX = e.clientX;
+      startY = e.clientY;
+      startW = el.offsetWidth;
+      startH = el.offsetHeight;
+      closeRadial();
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!resizing) return;
+      const w = Math.max(GRID * 4, startW + (e.clientX - startX));
+      const h = Math.max(GRID * 3, startH + (e.clientY - startY));
+      el.style.width = w + 'px';
+      el.style.height = h + 'px';
+      card.w = w;
+      card.h = h;
+      drawEdges();
+    });
+    handle.addEventListener('pointerup', () => {
+      if (!resizing) return;
+      resizing = false;
+      handle.releasePointerCapture(0);
+      const snappedW = Math.round(card.w / GRID) * GRID;
+      const snappedH = Math.round(card.h / GRID) * GRID;
+      el.style.width = snappedW + 'px';
+      el.style.height = snappedH + 'px';
+      card.w = snappedW;
+      card.h = snappedH;
+      drawEdges();
+      api(`/api/boards/${BOARD_ID}/cards/${card.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ w: snappedW, h: snappedH }),
+      });
+    });
+  }
+
+  // ── Port drag (draw connections) ─────────────────────────────────────────
+  function wirePorts(el, card) {
+    el.querySelectorAll('.sb-port').forEach((port) => {
+      port.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        port.setPointerCapture(e.pointerId);
+        const c = canvas.getBoundingClientRect();
+        const coords = portCoords(card, port.dataset.side);
+        portDrag = { fromCard: card, fromEl: el };
+        rubberLine.setAttribute('x1', coords.x);
+        rubberLine.setAttribute('y1', coords.y);
+        rubberLine.setAttribute('x2', coords.x);
+        rubberLine.setAttribute('y2', coords.y);
+        rubberLine.style.display = '';
+        closeRadial();
+      });
+      port.addEventListener('pointermove', (e) => {
+        if (!portDrag) return;
+        const c = canvas.getBoundingClientRect();
+        rubberLine.setAttribute('x2', e.clientX - c.left + canvas.scrollLeft);
+        rubberLine.setAttribute('y2', e.clientY - c.top + canvas.scrollTop);
+        const hover = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
+        const valid = hover && hover !== portDrag.fromEl;
+        if (portDrag.targetEl && portDrag.targetEl !== hover) {
+          portDrag.targetEl.classList.remove('drop-target');
+          portDrag.targetEl = null;
+        }
+        if (valid && portDrag.targetEl !== hover) {
+          hover.classList.add('drop-target');
+          portDrag.targetEl = hover;
+        }
+      });
+      port.addEventListener('pointerup', (e) => {
+        if (!portDrag) return;
+        rubberLine.style.display = 'none';
+        if (portDrag.targetEl) portDrag.targetEl.classList.remove('drop-target');
+        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
+        if (target && target !== portDrag.fromEl) {
+          const toCard = cards.find((c) => c.id === target.dataset.id);
+          if (toCard) {
+            api(`/api/boards/${BOARD_ID}/edges`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ from: portDrag.fromCard.id, to: toCard.id, kind: 'link' }),
+            }).then((edge) => { edges.push(edge); drawEdges(); });
+          }
+        }
+        portDrag = null;
+      });
+    });
+  }
+
+  // ── Radial menu ───────────────────────────────────────────────────────────
   function openRadial(cardEl, card) {
     if (radialFor === card.id) return closeRadial();
     const r = cardEl.getBoundingClientRect();
@@ -147,11 +368,9 @@
       if (!btn) return;
       const action = btn.dataset.action;
       closeRadial();
-      if (action === 'link') {
-        setLinkMode(card.id);
-        return;
-      }
-      api(`/api/boards/${BOARD_ID}/cards/${card.id}/actions/${action}`, { method: 'POST' }).then((res) => {
+      if (action === 'link') { setLinkMode(card.id); return; }
+      if (action === 'edit') { openEditDialog(cardEl, card); return; }
+      api(`/api/boards/${BOARD_ID}/cards/${card.id}/actions/${action}`, { method: 'POST' }).then(() => {
         if (action === 'delete') {
           cardEl.remove();
           cards = cards.filter((c) => c.id !== card.id);
@@ -166,13 +385,13 @@
     if (!e.target.closest('.sb-card') && !e.target.closest('.sb-radial')) {
       closeRadial();
       setLinkMode(null);
+      if (selectedEdge) { selectedEdge = null; drawEdges(); }
     }
   });
 
-  // ── Board action menu (popover, not a native dropdown) ───────────────────
+  // ── Board menu ────────────────────────────────────────────────────────────
   const boardMenuBtn = document.getElementById('sb-board-menu-btn');
   const boardMenu = document.getElementById('sb-board-menu');
-
   boardMenuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = boardMenu.style.display === 'flex';
@@ -187,24 +406,24 @@
     if (btn.dataset.action === 'add-card') openAddDialog();
   });
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('#sb-board-menu') && !e.target.closest('#sb-board-menu-btn')) {
+    if (!e.target.closest('#sb-board-menu') && !e.target.closest('#sb-board-menu-btn'))
       boardMenu.style.display = 'none';
-    }
   });
 
-  // ── Add-card flyout: kind list (click, not type/select) + per-kind detail ─
-  // The kind contract has optionsSchema/hooks reserved for later (see card-kind
-  // modules) — sections for them only render once a kind actually populates one,
-  // so "add a card" doesn't show empty ceremony for kinds that don't need it.
+  // ── Add-card flyout ───────────────────────────────────────────────────────
   const addDialog = document.getElementById('sb-add-dialog');
   const kindGrid = document.getElementById('sb-kind-grid');
   const detailEl = document.getElementById('sb-kind-detail');
   const addError = document.getElementById('sb-add-error');
   const addCreateBtn = document.getElementById('sb-add-create');
+  const addDialogTitle = document.getElementById('sb-add-title');
   let selectedKind = null;
+  let insertEdgeId = null;
 
   function openAddDialog() {
     if (!contract) return;
+    insertEdgeId = null;
+    addDialogTitle.textContent = 'Add card';
     selectedKind = null;
     addError.hidden = true;
     addCreateBtn.disabled = true;
@@ -216,16 +435,22 @@
     addDialog.showModal();
   }
 
+  function openInsertDialog(edgeId) {
+    openAddDialog();
+    insertEdgeId = edgeId;
+    addDialogTitle.textContent = 'Insert card on connector';
+  }
+
   function fieldHtml(key, type, value) {
-    const isLong = type === 'any' || key === 'text' || key === 'html';
+    const isLong = type === 'any' || key === 'text' || key === 'html' || key === 'xml';
     const tag = isLong ? 'textarea' : 'input';
     const val = type === 'any' ? JSON.stringify(value, null, 2) : (value ?? '');
     return `<div class="sb-field"><label>${key}${type === 'any' ? ' (JSON)' : ''}</label>
       <${tag} data-field="${key}" data-type="${type}">${val}</${tag}></div>`;
   }
 
-  function renderDetail(kind) {
-    const example = kind.exampleCard.payload || {};
+  function renderDetail(kind, values) {
+    const example = values || kind.exampleCard.payload || {};
     const contentFields = Object.keys(kind.payloadSchema || {})
       .map((key) => fieldHtml(key, kind.payloadSchema[key], example[key]))
       .join('');
@@ -233,20 +458,17 @@
     const optionsSection = optionsKeys.length
       ? `<div class="sb-detail-section"><h4>Options</h4>${optionsKeys.map((k) => fieldHtml(k, kind.optionsSchema[k])).join('')}</div>`
       : '';
-    const hooksSection = (kind.hooks || []).length
-      ? `<div class="sb-detail-section"><h4>Hooks</h4>${kind.hooks.map((h) => `<span class="badge">${h}</span>`).join(' ')}</div>`
-      : '';
-    detailEl.innerHTML = `
+    return `
       <div class="sb-detail-section"><h4>Use</h4><p class="muted" style="font-size:13px;margin:0">${kind.description}</p></div>
       <div class="sb-detail-section"><h4>Core contents</h4>${contentFields}</div>
-      ${optionsSection}${hooksSection}`;
+      ${optionsSection}`;
   }
 
-  function collectPayload(kind) {
+  function collectPayload(kind, containerEl) {
     const payload = {};
     const schema = kind.payloadSchema || {};
     Object.keys(schema).forEach((key) => {
-      const field = detailEl.querySelector(`[data-field="${key}"]`);
+      const field = containerEl.querySelector(`[data-field="${key}"]`);
       payload[key] = schema[key] === 'any' ? JSON.parse(field.value) : field.value;
     });
     return payload;
@@ -258,7 +480,7 @@
     kindGrid.querySelectorAll('.sb-kind-tile').forEach((t) => t.classList.remove('selected'));
     tile.classList.add('selected');
     selectedKind = contract.kinds.find((k) => k.id === tile.dataset.kind);
-    renderDetail(selectedKind);
+    detailEl.innerHTML = renderDetail(selectedKind);
     addCreateBtn.disabled = false;
     addError.hidden = true;
   });
@@ -268,32 +490,125 @@
   addCreateBtn.addEventListener('click', () => {
     if (!selectedKind) return;
     let payload;
-    try {
-      payload = collectPayload(selectedKind);
-    } catch (err) {
-      addError.textContent = 'Invalid JSON in a field: ' + err.message;
-      addError.hidden = false;
+    try { payload = collectPayload(selectedKind, detailEl); }
+    catch (err) { addError.textContent = 'Invalid JSON: ' + err.message; addError.hidden = false; return; }
+
+    if (insertEdgeId) {
+      insertCardOnEdge(insertEdgeId, selectedKind, payload);
       return;
     }
+
     const x = Math.round((canvas.scrollLeft + 40) / GRID) * GRID;
     const y = Math.round((canvas.scrollTop + 40) / GRID) * GRID;
     api(`/api/boards/${BOARD_ID}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: selectedKind.id, x, y, payload }),
-    })
-      .then((card) => {
-        cards.push(card);
-        mountCard(card);
+    }).then((card) => {
+      cards.push(card);
+      mountCard(card);
+      drawEdges();
+      addDialog.close();
+    }).catch(() => { addError.textContent = 'Failed to create card.'; addError.hidden = false; });
+  });
+
+  // Insert a new card in the middle of an existing connector, pushing the
+  // downstream card further away along the same direction to make room.
+  function insertCardOnEdge(edgeId, kind, payload) {
+    const edge = edges.find((e) => e.id === edgeId);
+    const a = cards.find((c) => c.id === edge.from);
+    const b = cards.find((c) => c.id === edge.to);
+    if (!edge || !a || !b) { addDialog.close(); return; }
+
+    const pa = cardCenter(a), pb = cardCenter(b);
+    const dx = pb.x - pa.x, dy = pb.y - pa.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist, uy = dy / dist;
+    const newW = 200, newH = 120;
+    const midX = Math.round(((pa.x + pb.x) / 2 - newW / 2) / GRID) * GRID;
+    const midY = Math.round(((pa.y + pb.y) / 2 - newH / 2) / GRID) * GRID;
+
+    api(`/api/boards/${BOARD_ID}/edges/${edgeId}`, { method: 'DELETE' })
+      .then(() => api(`/api/boards/${BOARD_ID}/cards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: kind.id, x: midX, y: midY, w: newW, h: newH, payload }),
+      }))
+      .then((newCard) => {
+        cards.push(newCard);
+        mountCard(newCard);
+
+        const shift = newW + 40;
+        const newBx = Math.round((b.x + ux * shift) / GRID) * GRID;
+        const newBy = Math.round((b.y + uy * shift) / GRID) * GRID;
+        b.x = newBx; b.y = newBy;
+        const bEl = canvas.querySelector(`.sb-card[data-id="${b.id}"]`);
+        if (bEl) { bEl.style.left = newBx + 'px'; bEl.style.top = newBy + 'px'; }
+        api(`/api/boards/${BOARD_ID}/cards/${b.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ x: newBx, y: newBy }),
+        });
+
+        edges = edges.filter((e) => e.id !== edgeId);
+        return Promise.all([
+          api(`/api/boards/${BOARD_ID}/edges`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: a.id, to: newCard.id, kind: 'link' }),
+          }),
+          api(`/api/boards/${BOARD_ID}/edges`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: newCard.id, to: b.id, kind: 'link' }),
+          }),
+        ]);
+      })
+      .then(([e1, e2]) => {
+        edges.push(e1, e2);
+        selectedEdge = null;
+        insertEdgeId = null;
         drawEdges();
         addDialog.close();
       })
-      .catch(() => {
-        addError.textContent = 'Failed to create card.';
-        addError.hidden = false;
-      });
+      .catch(() => { addError.textContent = 'Failed to insert card.'; addError.hidden = false; });
+  }
+
+  // ── Edit-card flyout ──────────────────────────────────────────────────────
+  const editDialog = document.getElementById('sb-edit-dialog');
+  const editDetailEl = document.getElementById('sb-edit-detail');
+  const editError = document.getElementById('sb-edit-error');
+  const editSaveBtn = document.getElementById('sb-edit-save');
+  let editTarget = null;
+
+  function openEditDialog(cardEl, card) {
+    if (!contract) return;
+    const kind = contract.kinds.find((k) => k.id === card.kind);
+    if (!kind) return;
+    editTarget = { cardEl, card, kind };
+    editError.hidden = true;
+    editDetailEl.innerHTML = renderDetail(kind, card.payload);
+    editDialog.showModal();
+  }
+
+  document.getElementById('sb-edit-cancel').addEventListener('click', () => editDialog.close());
+
+  editSaveBtn.addEventListener('click', () => {
+    if (!editTarget) return;
+    const { cardEl, card, kind } = editTarget;
+    let payload;
+    try { payload = collectPayload(kind, editDetailEl); }
+    catch (err) { editError.textContent = 'Invalid JSON: ' + err.message; editError.hidden = false; return; }
+    api(`/api/boards/${BOARD_ID}/cards/${card.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ payload }),
+    }).then((updated) => {
+      Object.assign(card, updated);
+      renderCardBody(cardEl, card);
+      editDialog.close();
+    }).catch(() => { editError.textContent = 'Failed to save.'; editError.hidden = false; });
   });
 
+  // ── Boot ──────────────────────────────────────────────────────────────────
   Promise.all([
     api('/api/contract'),
     api(`/api/boards/${BOARD_ID}/cards`),

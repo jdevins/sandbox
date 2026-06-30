@@ -1,0 +1,17 @@
+[
+  {
+    "schemaVersion": 1,
+    "payload": {
+      "value": {
+        "hello": "world"
+      }
+    },
+    "createdAt": "2026-06-29T22:55:22.810Z",
+    "id": "card_mqztg0cas2jy",
+    "kind": "json",
+    "x": 340,
+    "y": 120,
+    "w": 220,
+    "h": 240
+  }
+]
