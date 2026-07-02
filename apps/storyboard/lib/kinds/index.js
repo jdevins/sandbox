@@ -3,11 +3,19 @@ import * as json from './json.js';
 import * as html from './html.js';
 import * as xml from './xml.js';
 import * as sql from './sql.js';
+import * as prompt from './prompt.js';
+import * as agent from './agent.js';
+import * as toolCall from './tool-call.js';
+import * as hook from './hook.js';
+import * as gate from './gate.js';
+import * as memory from './memory.js';
+import * as output from './output.js';
+import * as evalKind from './eval.js';
 
 // New kinds register here. Each module exports { definition, render }.
 // The canvas/API never branch on a kind id directly — they only call
 // getKind(id).render(...) and read getKind(id).definition.
-const registry = [markdown, json, html, xml, sql];
+const registry = [markdown, json, html, xml, sql, prompt, agent, toolCall, hook, gate, memory, output, evalKind];
 
 export const kinds = Object.fromEntries(registry.map((k) => [k.definition.id, k]));
 

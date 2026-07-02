@@ -11,6 +11,7 @@ const BOARDS_INDEX = path.join(DATA_DIR, 'boards.json');
 const boardDir = (id) => path.join(DATA_DIR, 'boards', id);
 const cardsFile = (id) => path.join(boardDir(id), 'cards.json');
 const edgesFile = (id) => path.join(boardDir(id), 'edges.json');
+const framesFile = (id) => path.join(boardDir(id), 'frames.json');
 
 function readJSON(file, fallback) {
   try {
@@ -49,6 +50,7 @@ export function createBoard({ name }) {
   writeJSON(BOARDS_INDEX, boards);
   writeJSON(cardsFile(board.id), []);
   writeJSON(edgesFile(board.id), []);
+  writeJSON(framesFile(board.id), []);
   return board;
 }
 
@@ -131,4 +133,60 @@ export function createEdge(boardId, { from, to, kind }) {
 export function deleteEdge(boardId, edgeId) {
   const edges = listEdges(boardId).filter((e) => e.id !== edgeId);
   writeJSON(edgesFile(boardId), edges);
+}
+
+// ─── Frames ──────────────────────────────────────────────────────────────────
+// A frame is a freestanding, independently-sized/positioned container (group,
+// loop, or note region). Membership is derived, not stored on the frame: a
+// card carries its own `frameId`, set by the client on drag-end containment.
+// This keeps the frame's box editable/empty-able without needing to stay in
+// sync with whatever cards happen to be inside it.
+
+function normalizeFrame(f) {
+  const defined = Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined));
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    type: 'group',
+    label: '',
+    w: 320,
+    h: 220,
+    createdAt: new Date().toISOString(),
+    ...defined,
+    x: snapToGrid(defined.x),
+    y: snapToGrid(defined.y),
+  };
+}
+
+export function listFrames(boardId) {
+  return readJSON(framesFile(boardId), []);
+}
+
+export function createFrame(boardId, { type, label, x, y, w, h }) {
+  const frames = listFrames(boardId);
+  const frame = normalizeFrame({ id: newId('frame'), type, label, x, y, w, h });
+  frames.push(frame);
+  writeJSON(framesFile(boardId), frames);
+  return frame;
+}
+
+export function updateFrame(boardId, frameId, patch) {
+  const frames = listFrames(boardId);
+  const frame = frames.find((f) => f.id === frameId);
+  if (!frame) return null;
+  Object.assign(frame, patch);
+  if (patch.x !== undefined) frame.x = snapToGrid(patch.x);
+  if (patch.y !== undefined) frame.y = snapToGrid(patch.y);
+  writeJSON(framesFile(boardId), frames);
+  return frame;
+}
+
+export function deleteFrame(boardId, frameId) {
+  const frames = listFrames(boardId).filter((f) => f.id !== frameId);
+  writeJSON(framesFile(boardId), frames);
+  const cards = listCards(boardId);
+  let changed = false;
+  for (const c of cards) {
+    if (c.frameId === frameId) { delete c.frameId; changed = true; }
+  }
+  if (changed) writeJSON(cardsFile(boardId), cards);
 }

@@ -1,58 +1,30 @@
 [
   {
-    "id": "edge_mr02963gvpux",
-    "from": "card_mr0290yrpgrm",
-    "to": "card_mr01i4epl9ka",
+    "id": "edge_mr2zfhdm46lk",
+    "from": "card_mr2ze70h884x",
+    "to": "card_mr2zaj6nlx0y",
     "kind": "link",
-    "createdAt": "2026-06-30T03:02:00.220Z"
+    "createdAt": "2026-07-02T04:06:14.458Z"
   },
   {
-    "id": "edge_mr0298pz7r6q",
-    "from": "card_mr01i4epl9ka",
-    "to": "card_mr0290yrpgrm",
+    "id": "edge_mr2zfjqwcxye",
+    "from": "card_mr2zaj6nlx0y",
+    "to": "card_mr2zfc76b4js",
     "kind": "link",
-    "createdAt": "2026-06-30T03:02:03.623Z"
+    "createdAt": "2026-07-02T04:06:17.528Z"
   },
   {
-    "id": "edge_mr029bvajw4g",
-    "from": "card_mr0290yrpgrm",
-    "to": "card_mr01i4epl9ka",
+    "id": "edge_mr2zftnx6odu",
+    "from": "card_mr2ze70h884x",
+    "to": "card_mr2zbelb1tln",
     "kind": "link",
-    "createdAt": "2026-06-30T03:02:07.702Z"
+    "createdAt": "2026-07-02T04:06:30.381Z"
   },
   {
-    "id": "edge_mr029vwntcmu",
-    "from": "card_mr01i4epl9ka",
-    "to": "card_mr0290yrpgrm",
+    "id": "edge_mr2zi3s712b1",
+    "from": "card_mr2zhztjwsnl",
+    "to": "card_mr2ze70h884x",
     "kind": "link",
-    "createdAt": "2026-06-30T03:02:33.671Z"
-  },
-  {
-    "id": "edge_mr02a1cawytw",
-    "from": "card_mr0290yrpgrm",
-    "to": "card_mr01i4epl9ka",
-    "kind": "link",
-    "createdAt": "2026-06-30T03:02:40.714Z"
-  },
-  {
-    "id": "edge_mr02bd4lz3f1",
-    "from": "card_mr01i4epl9ka",
-    "to": "card_mr0290yrpgrm",
-    "kind": "link",
-    "createdAt": "2026-06-30T03:03:42.645Z"
-  },
-  {
-    "id": "edge_mr02p7ng7j1c",
-    "from": "card_mr01i4epl9ka",
-    "to": "card_mr0290yrpgrm",
-    "kind": "link",
-    "createdAt": "2026-06-30T03:14:28.732Z"
-  },
-  {
-    "id": "edge_mr02pe0lpk4d",
-    "from": "card_mr0290yrpgrm",
-    "to": "card_mr01i4epl9ka",
-    "kind": "link",
-    "createdAt": "2026-06-30T03:14:36.981Z"
+    "createdAt": "2026-07-02T04:08:16.807Z"
   }
 ]

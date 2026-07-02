@@ -1,26 +1,75 @@
 [
   {
     "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
     "payload": {
-      "text": "# Heading\n\nSome **bold** and *italic* text.\n\n- one\n- two"
+      "metric": "acuracy",
+      "criteria": "Response contains desired outputs",
+      "passCondition": ".75"
     },
-    "createdAt": "2026-06-30T02:40:58.321Z",
-    "id": "card_mr01i4epl9ka",
-    "kind": "markdown",
-    "x": 360,
+    "createdAt": "2026-07-02T04:02:23.519Z",
+    "id": "card_mr2zaj6nlx0y",
+    "kind": "eval",
+    "x": 880,
     "y": 240
   },
   {
     "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
     "payload": {
-      "value": {
-        "hello": "world"
-      }
+      "key": "log",
+      "io": "write",
+      "description": "token count"
     },
-    "createdAt": "2026-06-30T03:01:53.571Z",
-    "id": "card_mr0290yrpgrm",
-    "kind": "json",
+    "createdAt": "2026-07-02T04:03:04.223Z",
+    "id": "card_mr2zbelb1tln",
+    "kind": "memory",
     "x": 620,
-    "y": 80
+    "y": 540
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "name": "Summarizer",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You summarize text concisely"
+    },
+    "createdAt": "2026-07-02T04:05:14.369Z",
+    "id": "card_mr2ze70h884x",
+    "kind": "agent",
+    "x": 620,
+    "y": 240
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "format": "Text",
+      "destination": "TextBox",
+      "description": "Summary output"
+    },
+    "createdAt": "2026-07-02T04:06:07.746Z",
+    "id": "card_mr2zfc76b4js",
+    "kind": "output",
+    "x": 1160,
+    "y": 240
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "text": "# Heading\n\nI am having a hard time converting from procedural brain to agent brain.  I really hope I can think through how to implement agent work instead of hitting a wall when it comes time to build it."
+    },
+    "createdAt": "2026-07-02T04:08:11.671Z",
+    "id": "card_mr2zhztjwsnl",
+    "kind": "markdown",
+    "x": 320,
+    "y": 240
   }
 ]

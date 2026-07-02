@@ -7,7 +7,11 @@ import {
   GRID, listBoards, getBoard, createBoard, deleteBoard,
   listCards, createCard, updateCard, deleteCard,
   listEdges, createEdge, deleteEdge,
+  listFrames, createFrame, updateFrame, deleteFrame,
 } from './lib/store.js';
+import { buildSystemPrompt } from './lib/chat-context.js';
+import { getSession, newSessionId, formatHistory } from './lib/chat-session.js';
+import { getProvider } from './lib/provider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOADED_AT = Date.now();
@@ -16,7 +20,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.2.1',
+  version: '0.3.0',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -155,6 +159,31 @@ export function createApp({ name }) {
           background:var(--bg-elev-2); color:var(--text); border:1px solid var(--border); }
         .sb-radial button:hover { border-color:var(--accent); color:var(--accent); }
         #sb-edges { position:absolute; top:0; left:0; pointer-events:none; }
+        #sb-edge-toolbar-layer { position:absolute; top:0; left:0; pointer-events:none; }
+        #sb-edge-toolbar-layer .sb-edge-toolbar { position:absolute; pointer-events:auto; }
+        #sb-frames-layer { position:absolute; top:0; left:0; pointer-events:none; }
+        .sb-frame { position:absolute; border-radius:10px; pointer-events:auto; cursor:grab; }
+        .sb-frame[data-type="group"] { border:2px dashed var(--border); }
+        .sb-frame[data-type="loop"]  { border:2px dashed var(--accent); }
+        .sb-frame[data-type="note"]  { border:1px dotted var(--warn); background:color-mix(in srgb, var(--warn) 6%, transparent); }
+        .sb-frame-label { position:absolute; top:-26px; left:-2px; display:flex; align-items:center; gap:5px;
+          pointer-events:auto; cursor:grab; background:var(--bg-elev-2); border:1px solid var(--border); border-radius:6px;
+          padding:3px 6px; font-size:11px; color:var(--text-dim); max-width:calc(100% + 4px); }
+        .sb-frame[data-type="loop"] .sb-frame-label { color:var(--accent); border-color:var(--accent); }
+        .sb-frame-icon { flex:none; cursor:pointer; }
+        .sb-frame-icon:hover { color:var(--accent); }
+        .sb-frame-title { border:0; background:transparent; color:inherit; font-size:11px; font-family:inherit;
+          outline:none; min-width:24px; max-width:140px; cursor:default; white-space:nowrap; overflow:hidden; }
+        .sb-frame-title:empty::before { content:attr(data-placeholder); opacity:0.45; }
+        .sb-frame-title[contenteditable="true"] { cursor:text; }
+        .sb-frame-del { flex:none; border:0; background:transparent; color:var(--text-dim); cursor:pointer; font-size:12px; line-height:1; padding:0 2px; }
+        .sb-frame-del:hover { color:var(--bad); }
+        .sb-frame-resize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:se-resize;
+          pointer-events:auto; background:linear-gradient(135deg, transparent 50%, var(--border) 50%); border-bottom-right-radius:8px; }
+        .sb-frame-resize:hover { background:linear-gradient(135deg, transparent 50%, var(--accent) 50%); }
+        .sb-clean .sb-frame { background:transparent !important; cursor:default; }
+        .sb-clean .sb-frame-label { background:none; border:none; top:4px; left:4px; gap:3px; }
+        .sb-clean .sb-frame-icon, .sb-clean .sb-frame-del, .sb-clean .sb-frame-resize { display:none; }
 
         .sb-popover { position:absolute; display:none; background:var(--bg-elev); border:1px solid var(--border);
           border-radius:8px; padding:6px; flex-direction:column; gap:2px; z-index:20; min-width:160px; }
@@ -183,6 +212,24 @@ export function createApp({ name }) {
           border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; box-sizing:border-box; }
         .sb-field textarea { min-height:70px; font-family:var(--mono); font-size:12px; }
         .sb-dialog-error { color:var(--bad); font-size:12px; margin-top:8px; }
+        .sb-cat-tabs { display:flex; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+        .sb-cat-tab { flex:1; padding:5px 10px; font-size:12px; background:var(--bg-elev-2); color:var(--text-dim);
+          border:0; border-right:1px solid var(--border); cursor:pointer; }
+        .sb-cat-tab:last-child { border-right:0; }
+        .sb-cat-tab.active { background:var(--accent-dim); color:var(--accent); font-weight:600; }
+        .sb-cat-tab:hover:not(.active) { color:var(--text); }
+        .sb-kind-back { display:flex; align-items:center; gap:8px; padding:10px 0 4px; border-bottom:1px solid var(--border); margin-bottom:2px; }
+        .sb-kind-back-btn { background:none; border:1px solid var(--border); border-radius:6px; color:var(--text); cursor:pointer; padding:2px 8px; font-size:13px; }
+        .sb-kind-back-btn:hover { border-color:var(--accent); color:var(--accent); }
+        .sb-kind-back-label { font-weight:600; font-size:13px; }
+        .sb-field-hint { display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px;
+          font-size:9px; border-radius:50%; background:var(--bg-elev-2); border:1px solid var(--border);
+          color:var(--text-dim); cursor:help; vertical-align:middle; margin-left:2px; }
+        .sb-field-hint:hover { border-color:var(--accent); color:var(--accent); }
+        .sb-clean .sb-card-head { display:none; }
+        .sb-clean .sb-card { border-radius:8px; cursor:default; }
+        .sb-clean .sb-resize { display:none; }
+        .sb-clean .sb-port { display:none; }
       </style>
     </head><body>
       <div class="sb-toolbar">
@@ -192,6 +239,8 @@ export function createApp({ name }) {
           <button class="btn" id="sb-board-menu-btn">⋯ board</button>
           <div class="sb-popover" id="sb-board-menu">
             <button type="button" class="btn" data-action="add-card">+ Add card</button>
+            <button type="button" class="btn" data-action="add-frame">+ Add frame</button>
+            <button type="button" class="btn" data-action="clean-view">Clean view</button>
           </div>
           <div class="sb-zoom">
             <button type="button" id="sb-zoom-out" title="Zoom out">−</button>
@@ -202,7 +251,9 @@ export function createApp({ name }) {
       </div>
       <div class="sb-canvas" id="sb-canvas">
         <div class="sb-zoom-layer" id="sb-zoom-layer">
+          <div id="sb-frames-layer"></div>
           <svg id="sb-edges"></svg>
+          <div id="sb-edge-toolbar-layer"></div>
         </div>
         <div class="sb-radial" id="sb-radial">
           <button data-action="edit"   style="left:42px;top:0"   title="Edit card contents">Edit</button>
@@ -213,10 +264,17 @@ export function createApp({ name }) {
 
       <dialog id="sb-add-dialog">
         <div class="sb-flyout-head">
-          <h3 style="margin:0 0 4px" id="sb-add-title">Add card</h3>
-          <p class="muted" style="font-size:12px;margin:0">Pick a kind, then fill it in.</p>
+          <h3 style="margin:0 0 8px" id="sb-add-title">Add card</h3>
+          <div class="sb-cat-tabs" id="sb-cat-tabs">
+            <button class="sb-cat-tab active" data-cat="general" type="button">General</button>
+            <button class="sb-cat-tab" data-cat="ai-workflow" type="button">AI Workflow</button>
+          </div>
         </div>
         <div class="sb-flyout-body">
+          <div class="sb-kind-back" id="sb-kind-back" style="display:none">
+            <button class="sb-kind-back-btn" type="button">←</button>
+            <span class="sb-kind-back-label"></span>
+          </div>
           <div class="sb-kind-list" id="sb-kind-grid"></div>
           <div id="sb-kind-detail"></div>
         </div>
@@ -252,6 +310,7 @@ export function createApp({ name }) {
         const GRID = ${GRID};
       </script>
       <script src="${base}/assets/canvas.js?v=${LOADED_AT}"></script>
+      <script src="${base}/assets/sb-chat.js?v=${LOADED_AT}"></script>
       ${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}
     </body></html>`);
   });
@@ -375,6 +434,58 @@ export function createApp({ name }) {
   router.delete('/api/boards/:id/edges/:edgeId', (req, res) => {
     deleteEdge(req.params.id, req.params.edgeId);
     res.status(204).end();
+  });
+
+  // ── Frames API (groups / loops / note regions) ──────────────────────────
+  router.get('/api/boards/:id/frames', (req, res) => res.json(listFrames(req.params.id)));
+
+  router.post('/api/boards/:id/frames', (req, res) => {
+    const { type, label, x, y, w, h } = req.body || {};
+    res.status(201).json(createFrame(req.params.id, { type, label, x, y, w, h }));
+  });
+
+  router.patch('/api/boards/:id/frames/:frameId', (req, res) => {
+    const frame = updateFrame(req.params.id, req.params.frameId, req.body || {});
+    if (!frame) return res.status(404).json({ error: 'Not found' });
+    res.json(frame);
+  });
+
+  router.delete('/api/boards/:id/frames/:frameId', (req, res) => {
+    deleteFrame(req.params.id, req.params.frameId);
+    res.status(204).end();
+  });
+
+  // ── Board Chat ────────────────────────────────────────────────────────────
+  // Builds full context on turn 0 (rules + used-kind defs + board state),
+  // delta-only on subsequent turns. One provider call per message.
+  router.post('/api/boards/:id/chat', async (req, res) => {
+    const { message, sessionId: clientSessionId } = req.body || {};
+    if (!message?.trim()) return res.status(400).json({ error: 'message required' });
+    const boardId = req.params.id;
+    if (!getBoard(boardId)) return res.status(404).json({ error: 'Board not found' });
+
+    const sessionId = clientSessionId || newSessionId();
+    const session = getSession(sessionId);
+
+    try {
+      const [system] = await Promise.all([buildSystemPrompt(boardId, session)]);
+      const historyText = formatHistory(session.history);
+      const prompt = historyText
+        ? `${historyText}\n\nUser: ${message}`
+        : `User: ${message}`;
+
+      const provider = getProvider();
+      const { text } = await provider.complete({ system, prompt });
+      const reply = text.trim();
+
+      session.history.push({ role: 'user', content: message });
+      session.history.push({ role: 'assistant', content: reply });
+      session.turn += 1;
+
+      res.json({ reply, sessionId, turn: session.turn });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   return router;
