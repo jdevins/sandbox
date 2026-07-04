@@ -64,10 +64,10 @@
     "context": null
   },
   "backlog-groom": {
-    "status": "ok",
-    "output": "Item `mq6plw02` (\"App — Mermaid Diagrams\") has status **`on-hold`**, not `ready-to-groom`. Per the groomer's gating rule, I only act on `ready-to-groom` items. No diagram/mermaid app exists yet under `apps/` to correlate against either way.\n\n**Result:** 0 groomed, 0 blocked. Skipped — item is not in `ready-to-groom` state (currently `on-hold`); no annotation or groom-block action taken.\n\nRun: 2026-06-24\n",
-    "startedAt": "2026-06-25T03:54:37.155Z",
-    "lastRun": "2026-06-25T03:54:59.166Z",
+    "status": "running",
+    "output": null,
+    "startedAt": "2026-07-04T04:12:01.714Z",
+    "lastRun": "2026-07-04T04:12:01.714Z",
     "finishedAt": "2026-06-25T03:54:59.166Z",
     "history": [
       {
@@ -102,8 +102,8 @@
       }
     ],
     "context": {
-      "itemId": "mq6plw02",
-      "itemTitle": "App — Mermaid Diagrams"
+      "itemId": "mq6plw01",
+      "itemTitle": "App — Playwright Integration"
     }
   }
 }

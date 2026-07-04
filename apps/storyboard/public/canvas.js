@@ -67,7 +67,7 @@
   const KIND_ICONS = {
     markdown: '¶', json: '{}', html: '<>', xml: '</>', sql: 'DB',
     prompt: '✦', agent: '⬡', 'tool-call': '⚙', hook: '⚡', gate: '◈', memory: '◉', output: '◀', eval: '✓',
-    start: '▶', end: '■', branch: '◇', merge: '⋁', parallel: '║', join: '║', wait: '⏱', error: '!', 'loop-back': '↩',
+    start: '▶', end: '⏹', branch: '◇', merge: '⋁', parallel: '║', join: '║', wait: '⏸', error: '!', 'loop-back': '↩',
   };
 
   const api = (path, opts) => fetch(BASE + path, opts).then((r) => (r.status === 204 ? null : r.json()));
@@ -432,18 +432,16 @@
     if (isFlow) el.dataset.shape = kindDef.shape;
     el.style.left = card.x + 'px';
     el.style.top = card.y + 'px';
-    if (card.w) {
+    if (isFlow) {
+      // Flow cards are always sized by their kind definition — not resizable by the user.
+      // Ignore any stored w/h so old cards pick up updated defaults automatically.
+      card.w = kindDef.defaultW || 40;
+      card.h = kindDef.defaultH || 40;
       el.style.width = card.w + 'px';
-    } else if (isFlow) {
-      card.w = kindDef.defaultW || 80;
-      el.style.width = card.w + 'px';
-      api(`/api/boards/${BOARD_ID}/cards/${card.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ w: card.w, h: card.h }) });
-    }
-    if (card.h) {
       el.style.height = card.h + 'px';
-    } else if (isFlow) {
-      card.h = kindDef.defaultH || 80;
-      el.style.height = card.h + 'px';
+    } else {
+      if (card.w) el.style.width = card.w + 'px';
+      if (card.h) el.style.height = card.h + 'px';
     }
     const icon = KIND_ICONS[card.kind] || '□';
     el.innerHTML = `
@@ -728,8 +726,11 @@
       !k.category || k.category === 'general'
     );
     kindGrid.innerHTML = filtered
-      .map((k) => `<button type="button" class="sb-kind-tile" data-kind="${k.id}">
-        <div class="k-id">${k.name || k.id}</div><div class="k-desc">${k.description}</div></button>`)
+      .map((k) => {
+        const icon = KIND_ICONS[k.id] || '□';
+        return `<button type="button" class="sb-kind-tile" data-kind="${k.id}">
+          <div class="k-icon">${icon}</div><div class="k-id">${k.name || k.id}</div><div class="k-desc">${k.description}</div></button>`;
+      })
       .join('');
     document.querySelectorAll('.sb-cat-tab').forEach((t) => t.classList.toggle('active', t.dataset.cat === category));
   }

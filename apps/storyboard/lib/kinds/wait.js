@@ -22,7 +22,7 @@ export function render(payload) {
   const condition = esc(payload?.condition || 'waiting…');
   const timeout = payload?.timeout ? esc(payload.timeout) : null;
   return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:3px;text-align:center;padding:0 12px">
-    <span style="font-size:10px">⏱</span>
+    <span style="font-size:12px;line-height:1">⏸</span>
     <span style="font-size:8px;font-weight:600;word-break:break-word">${condition}</span>
   </div>`;
 }

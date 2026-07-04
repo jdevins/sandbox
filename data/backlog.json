@@ -125,7 +125,14 @@
     "status": "on-hold",
     "addedBy": "jdevins",
     "createdAt": "2026-06-22T00:00:00.000Z",
-    "annotations": []
+    "annotations": [
+      {
+        "agent": "groomer",
+        "kind": "vagueness",
+        "body": "Claude Desktop invocation path is undefined � no MCP/Claude Desktop integration exists in Sandbox. Unblock with: how Claude Desktop triggers a suite run (MCP tool? CLI subprocess?), the suite file format/schema, and where suites are persisted (filesystem path, structured JSON/YAML).",
+        "createdAt": "2026-07-04T04:12:44.405Z"
+      }
+    ]
   },
   {
     "estimate": "L",

@@ -11,8 +11,8 @@
     "createdAt": "2026-07-02T04:02:23.519Z",
     "id": "card_mr2zaj6nlx0y",
     "kind": "eval",
-    "x": 1340,
-    "y": 260
+    "x": 1200,
+    "y": 180
   },
   {
     "schemaVersion": 1,
@@ -69,7 +69,7 @@
     "createdAt": "2026-07-02T04:08:11.671Z",
     "id": "card_mr2zhztjwsnl",
     "kind": "markdown",
-    "x": 220,
+    "x": 260,
     "y": 160
   },
   {
@@ -107,55 +107,54 @@
     "w": 180,
     "h": 120,
     "payload": {
+      "label": ""
+    },
+    "createdAt": "2026-07-04T03:57:20.470Z",
+    "id": "card_mr5tzqolbah7",
+    "kind": "end",
+    "x": 1320,
+    "y": 440
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
       "condition": "approved?",
       "outputs": "yes, no"
     },
-    "createdAt": "2026-07-04T03:52:27.572Z",
-    "id": "card_mr5ttgoj87ym",
+    "createdAt": "2026-07-04T03:57:52.752Z",
+    "id": "card_mr5u0flcxvqn",
     "kind": "branch",
-    "x": 1580,
-    "y": 280
+    "x": 1440,
+    "y": 180
   },
   {
     "schemaVersion": 1,
     "w": 180,
     "h": 120,
     "payload": {
-      "label": ""
+      "catches": "*",
+      "action": "retry"
     },
-    "createdAt": "2026-07-04T03:52:34.464Z",
-    "id": "card_mr5ttm00bf85",
-    "kind": "start",
-    "x": 20,
-    "y": 160
+    "createdAt": "2026-07-04T04:03:21.782Z",
+    "id": "card_mr5u7hh27u6m",
+    "kind": "error",
+    "x": 1080,
+    "y": 460
   },
   {
     "schemaVersion": 1,
     "w": 180,
     "h": 120,
     "payload": {
-      "label": ""
+      "target": "Step 2",
+      "maxIterations": "10"
     },
-    "createdAt": "2026-07-04T03:52:53.222Z",
-    "id": "card_mr5tu0h2y1t0",
-    "kind": "merge",
-    "x": 1340,
-    "y": 500
-  },
-  {
-    "schemaVersion": 1,
-    "w": 180,
-    "h": 120,
-    "payload": {
-      "name": "search_files",
-      "callType": "function",
-      "io": "read",
-      "args": "{ "
-    },
-    "createdAt": "2026-07-04T03:55:35.202Z",
-    "id": "card_mr5txhghi6ra",
-    "kind": "tool-call",
-    "x": 40,
-    "y": 40
+    "createdAt": "2026-07-04T04:05:04.586Z",
+    "id": "card_mr5u9osq80ry",
+    "kind": "loop-back",
+    "x": 1660,
+    "y": 180
   }
 ]

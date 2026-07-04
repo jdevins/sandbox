@@ -47,5 +47,12 @@
     "to": "card_mr2zfc76b4js",
     "kind": "link",
     "createdAt": "2026-07-04T03:49:44.270Z"
+  },
+  {
+    "id": "edge_mr5u9jceuf5r",
+    "from": "card_mr2zaj6nlx0y",
+    "to": "card_mr5u0flcxvqn",
+    "kind": "link",
+    "createdAt": "2026-07-04T04:04:57.518Z"
   }
 ]
