@@ -1,0 +1,29 @@
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+export const definition = {
+  id: 'error',
+  name: 'Error / Catch',
+  description: 'Exception handler. Catches errors from upstream and routes to a recovery path.',
+  category: 'flow',
+  shape: 'shield',
+  defaultW: 90,
+  defaultH: 88,
+  payloadSchema: { catches: 'string', action: 'string' },
+  fieldHints: {
+    catches: 'Error types to handle, e.g. "timeout, validation" or "*" for all',
+    action: '"retry", "escalate", "skip", or a label for the recovery path',
+  },
+  exampleCard: { kind: 'error', payload: { catches: '*', action: 'retry' } },
+  actions: ['delete'],
+  renderMode: 'inline',
+};
+
+export function render(payload) {
+  const catches = esc(payload?.catches || '!');
+  const action = payload?.action ? esc(payload.action) : null;
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:85%;gap:3px;text-align:center;padding:0 8px">
+    <span style="font-size:16px;font-weight:700">!</span>
+    <span style="font-size:10px;font-weight:600;word-break:break-word">${catches}</span>
+    ${action ? `<span style="font-size:9px;opacity:.65">${action}</span>` : ''}
+  </div>`;
+}

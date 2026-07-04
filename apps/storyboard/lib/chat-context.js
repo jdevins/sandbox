@@ -98,8 +98,7 @@ function formatFullBoard(board, cards, edges, frames) {
       lines.push(`  [${c.id}] ${c.kind} at (${c.x},${c.y}) ${c.w || 180}×${c.h || 120}`);
       for (const [k, v] of Object.entries(c.payload || {})) {
         const val = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-        const trimmed = val.length > 120 ? val.slice(0, 120) + '…' : val;
-        if (trimmed) lines.push(`    ${k}: ${trimmed}`);
+        if (val) lines.push(`    ${k}: ${val}`);
       }
     }
   } else {
@@ -137,7 +136,7 @@ function computeDelta(prev, curr) {
       lines.push(`~ card [${c.id}] payload updated`);
       for (const [k, v] of Object.entries(c.payload || {})) {
         const val = typeof v === 'object' ? JSON.stringify(v) : String(v ?? '');
-        lines.push(`    ${k}: ${val.length > 80 ? val.slice(0, 80) + '…' : val}`);
+        if (val) lines.push(`    ${k}: ${val}`);
       }
       changed = true;
     }

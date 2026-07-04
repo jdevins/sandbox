@@ -67,6 +67,7 @@
   const KIND_ICONS = {
     markdown: '¶', json: '{}', html: '<>', xml: '</>', sql: 'DB',
     prompt: '✦', agent: '⬡', 'tool-call': '⚙', hook: '⚡', gate: '◈', memory: '◉', output: '◀', eval: '✓',
+    start: '▶', end: '■', branch: '◇', merge: '⋁', parallel: '║', join: '║', wait: '⏱', error: '!', 'loop-back': '↩',
   };
 
   const api = (path, opts) => fetch(BASE + path, opts).then((r) => (r.status === 204 ? null : r.json()));
@@ -423,12 +424,27 @@
 
   function mountCard(card) {
     const el = document.createElement('div');
-    el.className = 'sb-card';
+    const kindDef = contract?.kinds?.find((k) => k.id === card.kind);
+    const isFlow = !!kindDef?.shape;
+    el.className = isFlow ? 'sb-card sb-flow-card' : 'sb-card';
     el.dataset.id = card.id;
+    el.dataset.kindId = card.kind;
+    if (isFlow) el.dataset.shape = kindDef.shape;
     el.style.left = card.x + 'px';
     el.style.top = card.y + 'px';
-    if (card.w) el.style.width = card.w + 'px';
-    if (card.h) el.style.height = card.h + 'px';
+    if (card.w) {
+      el.style.width = card.w + 'px';
+    } else if (isFlow) {
+      card.w = kindDef.defaultW || 80;
+      el.style.width = card.w + 'px';
+      api(`/api/boards/${BOARD_ID}/cards/${card.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ w: card.w, h: card.h }) });
+    }
+    if (card.h) {
+      el.style.height = card.h + 'px';
+    } else if (isFlow) {
+      card.h = kindDef.defaultH || 80;
+      el.style.height = card.h + 'px';
+    }
     const icon = KIND_ICONS[card.kind] || '□';
     el.innerHTML = `
       <div class="sb-card-head">
@@ -473,18 +489,21 @@
   // ── Drag (move card) ─────────────────────────────────────────────────────
   function wireDrag(el, card) {
     const head = el.querySelector('.sb-card-head');
+    const isFlow = el.classList.contains('sb-flow-card');
+    const dragTarget = isFlow ? el : head;
     let dragging = false, offX = 0, offY = 0;
 
-    head.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.sb-dots')) return;
+    dragTarget.addEventListener('pointerdown', (e) => {
+      if (!isFlow && e.target.closest('.sb-dots')) return;
+      if (e.target.closest('.sb-port') || e.target.closest('.sb-resize')) return;
       dragging = true;
-      head.setPointerCapture(e.pointerId);
+      dragTarget.setPointerCapture(e.pointerId);
       const r = el.getBoundingClientRect();
       offX = (e.clientX - r.left) / zoom;
       offY = (e.clientY - r.top) / zoom;
       closeRadial();
     });
-    head.addEventListener('pointermove', (e) => {
+    dragTarget.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const p = toModel(e.clientX, e.clientY);
       const x = p.x - offX;
@@ -495,10 +514,10 @@
       card.y = y;
       drawEdges();
     });
-    head.addEventListener('pointerup', (e) => {
+    dragTarget.addEventListener('pointerup', (e) => {
       if (!dragging) return;
       dragging = false;
-      head.releasePointerCapture(e.pointerId);
+      dragTarget.releasePointerCapture(e.pointerId);
       const snappedX = Math.round(card.x / GRID) * GRID;
       const snappedY = Math.round(card.y / GRID) * GRID;
       el.style.left = snappedX + 'px';
@@ -696,7 +715,9 @@
   function renderKindGrid(category) {
     activeCategory = category;
     const filtered = contract.kinds.filter((k) =>
-      category === 'ai-workflow' ? k.category === 'ai-workflow' : !k.category || k.category === 'general'
+      category === 'ai-workflow' ? k.category === 'ai-workflow' :
+      category === 'flow' ? k.category === 'flow' :
+      !k.category || k.category === 'general'
     );
     kindGrid.innerHTML = filtered
       .map((k) => `<button type="button" class="sb-kind-tile" data-kind="${k.id}">
