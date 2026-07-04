@@ -8,10 +8,10 @@ export const definition = {
   shape: 'diamond',
   defaultW: 56,
   defaultH: 48,
-  payloadSchema: { condition: 'string', outputs: 'string' },
+  payloadSchema: { condition: 'string', outputs: 'list' },
   fieldHints: {
     condition: 'Expression or field to evaluate, e.g. "status == approved" or "score > 0.8"',
-    outputs: 'Comma-separated path names, e.g. "yes, no" or "pass, fail, retry"',
+    outputs: 'Named output paths — add one per route. Drag from a port to connect.',
   },
   exampleCard: { kind: 'branch', payload: { condition: 'approved?', outputs: 'yes, no' } },
   actions: ['edit', 'delete'],

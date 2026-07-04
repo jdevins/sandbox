@@ -7,15 +7,17 @@ export const definition = {
   name: 'Gate',
   description: 'Decision or condition check. Types: human approval, AI judgment, API result, query result, or calculation.',
   category: 'ai-workflow',
-  payloadSchema: { gateType: 'string', condition: 'string' },
+  payloadSchema: { gateType: 'string', condition: 'string', outputs: 'list' },
   optionsSchema: {},
   hooks: [],
-  exampleCard: { kind: 'gate', payload: { gateType: 'human', condition: 'Is the output safe to send?' } },
+  outputColors: 'binary',
+  exampleCard: { kind: 'gate', payload: { gateType: 'human', condition: 'Is the output safe to send?', outputs: 'allow, deny' } },
   actions: ['delete'],
   renderMode: 'inline',
   fieldHints: {
     gateType: 'human — manual approval · ai — LLM judgment · api — external check · query — DB/search result · calc — computed value',
     condition: 'The question or test evaluated at this gate. Outcome determines which branch continues.',
+    outputs: 'Named output paths — drag from a port to connect a specific route.',
   },
 };
 

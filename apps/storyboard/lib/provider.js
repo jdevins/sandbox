@@ -1,33 +1,28 @@
-import { spawn } from 'node:child_process';
+import { runClaude } from '../../../src/llmObserver.js';
 
-export function cliProvider({ model } = {}) {
+// Routed through the shared observer (src/llmObserver.js) so every completion
+// is tagged app='storyboard' and shows up live in the observability
+// dashboard. `feature`/`agent` default at construction time; a per-call
+// complete({ feature, agent }) overrides them.
+export function cliProvider({ model, feature = null, agent = null } = {}) {
   return {
     name: 'cli',
     model: model || 'claude',
-    async complete({ system, prompt } = {}) {
-      return new Promise((resolve, reject) => {
-        const args = ['-p'];
-        if (model) args.push('--model', model);
-        if (system) args.push('--system-prompt', system);
-        const child = spawn('claude', args, { shell: false });
-        let output = '', errOut = '';
-        child.stdout.on('data', (d) => (output += d.toString()));
-        child.stderr.on('data', (d) => (errOut += d.toString()));
-        child.on('error', (err) => reject(new Error(`Failed to launch claude CLI: ${err.message}`)));
-        child.on('close', (code) => {
-          if (code !== 0 && !output.trim()) {
-            reject(new Error(`claude CLI exited ${code}: ${errOut.trim() || '(no output)'}`));
-          } else {
-            resolve({ text: output.trim(), provider: 'cli', model: model || 'claude' });
-          }
-        });
-        child.stdin.write(prompt || '');
-        child.stdin.end();
+    async complete({ system, prompt, model: callModel, feature: callFeature, agent: callAgent } = {}) {
+      const result = await runClaude({
+        app: 'storyboard',
+        feature: callFeature || feature,
+        agent: callAgent || agent,
+        prompt,
+        system,
+        model: callModel || model,
       });
+      if (result.status === 'error') throw new Error(result.text || 'claude CLI error');
+      return { text: (result.text || '').trim(), provider: 'cli', model: callModel || model || 'claude' };
     },
   };
 }
 
-export function getProvider() {
-  return cliProvider({ model: process.env.SB_MODEL });
+export function getProvider(opts = {}) {
+  return cliProvider({ model: process.env.SB_MODEL, ...opts });
 }

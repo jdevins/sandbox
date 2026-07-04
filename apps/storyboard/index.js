@@ -6,7 +6,7 @@ import { listDefinitions, getKind } from './lib/kinds/index.js';
 import {
   GRID, listBoards, getBoard, createBoard, deleteBoard,
   listCards, createCard, updateCard, deleteCard,
-  listEdges, createEdge, deleteEdge,
+  listEdges, createEdge, patchEdge, deleteEdge,
   listFrames, createFrame, updateFrame, deleteFrame,
 } from './lib/store.js';
 import { buildSystemPrompt } from './lib/chat-context.js';
@@ -229,6 +229,16 @@ export function createApp({ name }) {
           font-size:9px; border-radius:50%; background:var(--bg-elev-2); border:1px solid var(--border);
           color:var(--text-dim); cursor:help; vertical-align:middle; margin-left:2px; }
         .sb-field-hint:hover { border-color:var(--accent); color:var(--accent); }
+        .sb-list-items { display:flex; flex-direction:column; gap:4px; margin-bottom:8px; min-height:0; }
+        .sb-list-item { display:flex; align-items:center; gap:6px; font-size:12px; }
+        .sb-list-dot { width:10px; height:10px; border-radius:2px; flex:none; }
+        .sb-list-name { flex:1; }
+        .sb-list-del { border:none; background:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:0 2px; line-height:1; }
+        .sb-list-del:hover { color:var(--bad); }
+        .sb-list-add-row { display:flex; gap:6px; }
+        .sb-list-input { flex:1; background:var(--bg-elev-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 8px; font-size:12px; }
+        .sb-list-add-btn { background:var(--bg-elev-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+        .sb-list-add-btn:hover { border-color:var(--accent); color:var(--accent); }
         .sb-clean .sb-card-head { display:none; }
         .sb-clean .sb-card { border-radius:8px; cursor:default; }
         .sb-clean .sb-resize { display:none; }
@@ -460,8 +470,14 @@ export function createApp({ name }) {
   router.get('/api/boards/:id/edges', (req, res) => res.json(listEdges(req.params.id)));
 
   router.post('/api/boards/:id/edges', (req, res) => {
-    const { from, to, kind } = req.body || {};
-    res.status(201).json(createEdge(req.params.id, { from, to, kind }));
+    const { from, to, kind, sourcePort } = req.body || {};
+    res.status(201).json(createEdge(req.params.id, { from, to, kind, sourcePort }));
+  });
+
+  router.patch('/api/boards/:id/edges/:edgeId', (req, res) => {
+    const edge = patchEdge(req.params.id, req.params.edgeId, req.body || {});
+    if (!edge) return res.status(404).json({ error: 'not found' });
+    res.json(edge);
   });
 
   router.delete('/api/boards/:id/edges/:edgeId', (req, res) => {
@@ -508,7 +524,7 @@ export function createApp({ name }) {
         : `User: ${message}`;
 
       const provider = getProvider();
-      const { text } = await provider.complete({ system, prompt });
+      const { text } = await provider.complete({ system, prompt, feature: 'board-chat', agent: boardId });
       const reply = text.trim();
 
       session.history.push({ role: 'user', content: message });

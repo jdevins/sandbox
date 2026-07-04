@@ -5,16 +5,18 @@ export const definition = {
   name: 'Eval',
   description: 'Evaluation node. Grades or scores output against defined criteria before passing it downstream.',
   category: 'ai-workflow',
-  payloadSchema: { metric: 'string', criteria: 'string', passCondition: 'string' },
+  payloadSchema: { metric: 'string', criteria: 'string', passCondition: 'string', outputs: 'list' },
   optionsSchema: {},
   hooks: [],
-  exampleCard: { kind: 'eval', payload: { metric: 'accuracy', criteria: 'Response matches expected format and covers all required fields', passCondition: 'score >= 0.85' } },
+  outputColors: 'binary',
+  exampleCard: { kind: 'eval', payload: { metric: 'accuracy', criteria: 'Response matches expected format and covers all required fields', passCondition: 'score >= 0.85', outputs: 'pass, fail' } },
   actions: ['delete'],
   renderMode: 'inline',
   fieldHints: {
     metric: 'What is being measured (e.g. accuracy, relevance, latency, format compliance).',
     criteria: 'Detailed description of what a passing result looks like.',
     passCondition: 'Expression that determines pass/fail (e.g. score >= 0.85, contains_all_fields == true).',
+    outputs: 'Named output paths — drag from a port to connect a specific route.',
   },
 };
 

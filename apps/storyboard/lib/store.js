@@ -122,10 +122,21 @@ export function listEdges(boardId) {
   return readJSON(edgesFile(boardId), []);
 }
 
-export function createEdge(boardId, { from, to, kind }) {
+export function createEdge(boardId, { from, to, kind, sourcePort }) {
   const edges = listEdges(boardId);
   const edge = { id: newId('edge'), from, to, kind: kind || 'link', createdAt: new Date().toISOString() };
+  if (sourcePort) edge.sourcePort = sourcePort;
   edges.push(edge);
+  writeJSON(edgesFile(boardId), edges);
+  return edge;
+}
+
+export function patchEdge(boardId, edgeId, fields) {
+  const allowed = ['type', 'label'];
+  const edges = listEdges(boardId);
+  const edge = edges.find((e) => e.id === edgeId);
+  if (!edge) return null;
+  allowed.forEach((k) => { if (k in fields) edge[k] = fields[k]; });
   writeJSON(edgesFile(boardId), edges);
   return edge;
 }

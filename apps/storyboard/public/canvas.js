@@ -70,6 +70,31 @@
     start: '▶', end: '⏹', branch: '◇', merge: '⋁', parallel: '║', join: '║', wait: '⏸', error: '!', 'loop-back': '↩',
   };
 
+  const PORT_COLORS_BINARY  = ['#1D9E75', '#D85A30'];
+  const PORT_COLORS_NEUTRAL = ['#534AB7', '#185FA5', '#BA7517', '#5F5E5A', '#993556', '#0F6E56'];
+  const PORT_TEXT = {
+    '#1D9E75': '#9FE1CB', '#D85A30': '#F5C4B3',
+    '#534AB7': '#CECBF6', '#185FA5': '#B5D4F4',
+    '#BA7517': '#FAC775', '#5F5E5A': '#D3D1C7',
+    '#993556': '#F4C0D1', '#0F6E56': '#9FE1CB',
+  };
+
+  function getPortColor(index, outputColors) {
+    const palette = outputColors === 'binary' ? PORT_COLORS_BINARY : PORT_COLORS_NEUTRAL;
+    return palette[index % palette.length];
+  }
+
+  function portColorForEdge(edge) {
+    if (!edge.sourcePort) return null;
+    const fromCard = cards.find((c) => c.id === edge.from);
+    if (!fromCard?.payload?.outputs) return null;
+    const names = fromCard.payload.outputs.split(',').map((s) => s.trim()).filter(Boolean);
+    const idx = names.indexOf(edge.sourcePort);
+    if (idx < 0) return null;
+    const kindDef = contract?.kinds?.find((k) => k.id === fromCard.kind);
+    return getPortColor(idx, kindDef?.outputColors);
+  }
+
   const api = (path, opts) => fetch(BASE + path, opts).then((r) => (r.status === 204 ? null : r.json()));
 
   // ── SVG setup ────────────────────────────────────────────────────────────
@@ -316,11 +341,14 @@
         </marker>
         <marker id="sb-arrow-sel" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
           <path d="M0,0 L0,8 L9,4 z" fill="var(--accent)"/>
+        </marker>
+        <marker id="sb-arrow-ref" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L0,8 L9,4 z" fill="var(--accent-muted,#5a9a8a)"/>
         </marker>`;
       edgesSvg.insertBefore(defs, edgesGroup);
     }
 
-    let toolbarFor = null; // { id, mx, my } — rendered outside the SVG so it isn't hidden behind cards
+    let toolbarFor = null; // { id, mx, my, type } — rendered outside the SVG so it isn't hidden behind cards
     edgesGroup.innerHTML = edges.map((e) => {
       const a = cards.find((c) => c.id === e.from);
       const b = cards.find((c) => c.id === e.to);
@@ -329,11 +357,14 @@
       const pb = cardCenter(b);
       const { d, mx, my, cv1, cv2 } = elbowPath(pa.x, pa.y, pb.x, pb.y);
       const sel = selectedEdge === e.id;
-      const col = sel ? 'var(--accent)' : 'var(--text-dim)';
-      const marker = sel ? 'url(#sb-arrow-sel)' : 'url(#sb-arrow)';
-      const op = sel ? 1 : 0.65;
-      if (sel) toolbarFor = { id: e.id, mx, my };
-      const chevron = (cv) => cv.show
+      const isRef = e.type === 'reference';
+      const portColor = portColorForEdge(e);
+      const col = sel ? 'var(--accent)' : portColor || (isRef ? 'var(--accent-muted,#5a9a8a)' : 'var(--text-dim)');
+      const marker = sel ? 'url(#sb-arrow-sel)' : isRef ? 'url(#sb-arrow-ref)' : 'url(#sb-arrow)';
+      const dash = isRef ? 'stroke-dasharray="7 4"' : '';
+      const op = sel ? 1 : portColor ? 0.85 : isRef ? 0.75 : 0.65;
+      if (sel) toolbarFor = { id: e.id, mx, my, type: e.type || 'sequence' };
+      const chevron = (cv) => cv.show && !isRef
         ? `<polygon points="-7,-5 7,0 -7,5" fill="${col}" opacity="${op}" pointer-events="none"
             transform="translate(${cv.x},${cv.y}) rotate(${cv.a})"/>`
         : '';
@@ -341,12 +372,13 @@
         <path d="${d}" fill="none"
           stroke="transparent" stroke-width="14" style="cursor:pointer" pointer-events="stroke" data-edge="${e.id}"/>
         <path d="${d}" fill="none"
-          stroke="${col}" stroke-width="${sel ? 2.5 : 2}" stroke-linejoin="round" marker-end="${marker}" pointer-events="none"/>
+          stroke="${col}" stroke-width="${sel ? 2.5 : isRef ? 1.5 : 2}" stroke-linejoin="round" ${dash} marker-end="${marker}" pointer-events="none"/>
         ${chevron(cv1)}${chevron(cv2)}`;
     }).join('');
 
     edgeToolbarLayer.innerHTML = toolbarFor ? `
-      <div class="sb-edge-toolbar" style="left:${toolbarFor.mx - 42}px;top:${toolbarFor.my - 15}px">
+      <div class="sb-edge-toolbar" style="left:${toolbarFor.mx - 55}px;top:${toolbarFor.my - 15}px">
+        <button data-type-edge="${toolbarFor.id}" title="${toolbarFor.type === 'reference' ? 'Switch to sequence' : 'Switch to reference'}" type="button" style="${toolbarFor.type === 'reference' ? 'color:var(--accent-muted,#5a9a8a)' : ''}">${toolbarFor.type === 'reference' ? '╌' : '—'}</button>
         <button data-flip-edge="${toolbarFor.id}" title="Flip direction" type="button">⇄</button>
         <button data-add-edge="${toolbarFor.id}" title="Insert card here" type="button">+</button>
         <button data-del-edge="${toolbarFor.id}" title="Delete connector" type="button" class="danger">×</button>
@@ -397,11 +429,93 @@
           });
       });
     });
+    edgeToolbarLayer.querySelectorAll('[data-type-edge]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const id = el.dataset.typeEdge;
+        const edge = edges.find((e) => e.id === id);
+        if (!edge) return;
+        const next = edge.type === 'reference' ? 'sequence' : 'reference';
+        api(`/api/boards/${BOARD_ID}/edges/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: next }),
+        }).then(() => { edge.type = next; drawEdges(); });
+      });
+    });
     edgeToolbarLayer.querySelectorAll('[data-add-edge]').forEach((el) => {
       el.addEventListener('click', (ev) => {
         ev.stopPropagation();
         openInsertDialog(el.dataset.addEdge);
       });
+    });
+  }
+
+  // ── Named output ports ────────────────────────────────────────────────────
+  function mountNamedPorts(el, card, kindDef) {
+    el.querySelectorAll('.sb-named-port').forEach((p) => p.remove());
+    const raw = card.payload?.outputs;
+    if (!raw) return;
+    const names = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!names.length) return;
+    el.style.overflow = 'visible';
+    const h = card.h || 120;
+    const step = h / (names.length + 1);
+    names.forEach((name, i) => {
+      const color = getPortColor(i, kindDef?.outputColors);
+      const textColor = PORT_TEXT[color] || '#fff';
+      const port = document.createElement('div');
+      port.className = 'sb-named-port';
+      port.dataset.port = name;
+      port.dataset.color = color;
+      port.style.cssText = `position:absolute;right:0;top:${Math.round(step * (i + 1) - 10)}px;display:flex;align-items:center;transform:translateX(100%);cursor:grab;z-index:20;user-select:none`;
+      port.innerHTML = `<div style="width:8px;height:2px;background:${color}"></div><div style="background:${color};color:${textColor};font-size:9px;font-weight:600;padding:3px 6px;border-radius:0 3px 3px 0;white-space:nowrap">${name}</div>`;
+      el.appendChild(port);
+      wireNamedPort(port, card, name, color);
+    });
+  }
+
+  function wireNamedPort(port, card, portName, color) {
+    port.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      port.setPointerCapture(e.pointerId);
+      const coords = portCoords(card, 'right');
+      portDrag = { fromCard: card, fromEl: port.closest('.sb-card'), sourcePort: portName, sourceColor: color };
+      rubberLine.setAttribute('stroke', color);
+      rubberLine.setAttribute('x1', coords.x);
+      rubberLine.setAttribute('y1', coords.y);
+      rubberLine.setAttribute('x2', coords.x);
+      rubberLine.setAttribute('y2', coords.y);
+      rubberLine.style.display = '';
+      closeRadial();
+    });
+    port.addEventListener('pointermove', (e) => {
+      if (!portDrag || portDrag.sourcePort !== portName) return;
+      const p = toModel(e.clientX, e.clientY);
+      rubberLine.setAttribute('x2', p.x);
+      rubberLine.setAttribute('y2', p.y);
+      const hover = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
+      const valid = hover && hover !== portDrag.fromEl;
+      if (portDrag.targetEl && portDrag.targetEl !== hover) { portDrag.targetEl.classList.remove('drop-target'); portDrag.targetEl = null; }
+      if (valid && portDrag.targetEl !== hover) { hover.classList.add('drop-target'); portDrag.targetEl = hover; }
+    });
+    port.addEventListener('pointerup', (e) => {
+      if (!portDrag) return;
+      rubberLine.style.display = 'none';
+      rubberLine.setAttribute('stroke', 'var(--accent)');
+      if (portDrag.targetEl) portDrag.targetEl.classList.remove('drop-target');
+      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
+      if (target && target !== portDrag.fromEl) {
+        const toCard = cards.find((c) => c.id === target.dataset.id);
+        if (toCard) {
+          api(`/api/boards/${BOARD_ID}/edges`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: portDrag.fromCard.id, to: toCard.id, kind: 'link', sourcePort: portDrag.sourcePort }),
+          }).then((edge) => { edges.push(edge); drawEdges(); });
+        }
+      }
+      portDrag = null;
     });
   }
 
@@ -463,6 +577,7 @@
     wireDrag(el, card);
     wireResize(el, card);
     wirePorts(el, card);
+    mountNamedPorts(el, card, kindDef);
 
     if (!isFlow) {
       el.querySelector('.sb-dots').addEventListener('click', (e) => {
@@ -763,11 +878,38 @@
     return `<div class="sb-field">${label}<input data-field="${key}" data-type="${type}" value="${val}" placeholder="${hint || key}"></div>`;
   }
 
+  function listFieldHtml(key, value, hints, outputColors) {
+    const val = String(value ?? '');
+    const items = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const hint = hints[key] || '';
+    const hintEl = hint ? ` <span class="sb-field-hint" title="${hint}">?</span>` : '';
+    const itemsHtml = items.map((name, i) => {
+      const color = getPortColor(i, outputColors);
+      return `<div class="sb-list-item"><span class="sb-list-dot" style="background:${color}"></span><span class="sb-list-name">${name}</span><button class="sb-list-del" type="button" data-idx="${i}">×</button></div>`;
+    }).join('');
+    return `<div class="sb-field">
+      <label>${key}${hintEl}</label>
+      <div class="sb-list-editor" data-field="${key}" data-type="list">
+        <input type="hidden" data-list-value value="${val}">
+        <div class="sb-list-items">${itemsHtml}</div>
+        <div class="sb-list-add-row">
+          <input type="text" class="sb-list-input" placeholder="path name">
+          <button class="sb-list-add-btn" type="button">Add</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function renderDetail(kind, values) {
     const example = values || kind.exampleCard?.payload || {};
     const hints = kind.fieldHints || {};
     const contentFields = Object.keys(kind.payloadSchema || {})
-      .map((key) => fieldHtml(key, kind.payloadSchema[key], example[key], hints))
+      .map((key) => {
+        const type = kind.payloadSchema[key];
+        return type === 'list'
+          ? listFieldHtml(key, example[key], hints, kind.outputColors)
+          : fieldHtml(key, type, example[key], hints);
+      })
       .join('');
     const optionsKeys = Object.keys(kind.optionsSchema || {});
     const optionsSection = optionsKeys.length
@@ -782,10 +924,53 @@
     const payload = {};
     const schema = kind.payloadSchema || {};
     Object.keys(schema).forEach((key) => {
-      const field = containerEl.querySelector(`[data-field="${key}"]`);
-      payload[key] = schema[key] === 'any' ? JSON.parse(field.value) : field.value;
+      if (schema[key] === 'list') {
+        const editor = containerEl.querySelector(`[data-field="${key}"][data-type="list"]`);
+        payload[key] = editor?.querySelector('[data-list-value]')?.value || '';
+      } else {
+        const field = containerEl.querySelector(`[data-field="${key}"]`);
+        payload[key] = schema[key] === 'any' ? JSON.parse(field.value) : field.value;
+      }
     });
     return payload;
+  }
+
+  function setupListFields(containerEl, kind) {
+    containerEl.querySelectorAll('.sb-list-editor[data-type="list"]').forEach((editor) => {
+      const key = editor.dataset.field;
+      const outputColors = kind?.outputColors;
+      const hidden = editor.querySelector('[data-list-value]');
+      const itemsEl = editor.querySelector('.sb-list-items');
+      const addInput = editor.querySelector('.sb-list-input');
+      const addBtn = editor.querySelector('.sb-list-add-btn');
+
+      function getItems() { return (hidden.value || '').split(',').map((s) => s.trim()).filter(Boolean); }
+      function setItems(arr) {
+        hidden.value = arr.join(', ');
+        itemsEl.innerHTML = arr.map((name, i) => {
+          const color = getPortColor(i, outputColors);
+          return `<div class="sb-list-item"><span class="sb-list-dot" style="background:${color}"></span><span class="sb-list-name">${name}</span><button class="sb-list-del" type="button" data-idx="${i}">×</button></div>`;
+        }).join('');
+        itemsEl.querySelectorAll('.sb-list-del').forEach((btn) => {
+          btn.addEventListener('click', () => { const a = getItems(); a.splice(Number(btn.dataset.idx), 1); setItems(a); });
+        });
+      }
+
+      itemsEl.querySelectorAll('.sb-list-del').forEach((btn) => {
+        btn.addEventListener('click', () => { const a = getItems(); a.splice(Number(btn.dataset.idx), 1); setItems(a); });
+      });
+      addBtn.addEventListener('click', () => {
+        const name = addInput.value.trim();
+        if (!name) return;
+        const items = getItems();
+        if (items.length >= 6) return;
+        items.push(name);
+        setItems(items);
+        addInput.value = '';
+        addInput.focus();
+      });
+      addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); } });
+    });
   }
 
   document.getElementById('sb-cat-tabs').addEventListener('click', (e) => {
@@ -807,6 +992,7 @@
     kindBack.style.display = 'flex';
     kindBack.querySelector('.sb-kind-back-label').textContent = kind.name || kind.id;
     detailEl.innerHTML = renderDetail(kind);
+    setupListFields(detailEl, kind);
     addCreateBtn.disabled = false;
     addError.hidden = true;
   }
@@ -930,6 +1116,7 @@
     editTarget = { cardEl, card, kind };
     editError.hidden = true;
     editDetailEl.innerHTML = renderDetail(kind, card.payload);
+    setupListFields(editDetailEl, kind);
     editDialog.showModal();
   }
 
@@ -948,6 +1135,8 @@
     }).then((updated) => {
       Object.assign(card, updated);
       renderCardBody(cardEl, card);
+      mountNamedPorts(cardEl, card, kind);
+      drawEdges();
       editDialog.close();
     }).catch(() => { editError.textContent = 'Failed to save.'; editError.hidden = false; });
   });
