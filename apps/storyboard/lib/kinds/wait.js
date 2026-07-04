@@ -6,8 +6,8 @@ export const definition = {
   description: 'Pauses execution until a condition, event, or timeout is met.',
   category: 'flow',
   shape: 'pill',
-  defaultW: 96,
-  defaultH: 44,
+  defaultW: 64,
+  defaultH: 30,
   payloadSchema: { condition: 'string', timeout: 'string' },
   fieldHints: {
     condition: 'What to wait for, e.g. "user confirms", "webhook received", "file exists"',
@@ -22,8 +22,7 @@ export function render(payload) {
   const condition = esc(payload?.condition || 'waiting…');
   const timeout = payload?.timeout ? esc(payload.timeout) : null;
   return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:3px;text-align:center;padding:0 12px">
-    <span style="font-size:13px">⏱</span>
-    <span style="font-size:10px;font-weight:600;word-break:break-word">${condition}</span>
-    ${timeout ? `<span style="font-size:9px;opacity:.65">max ${timeout}</span>` : ''}
+    <span style="font-size:10px">⏱</span>
+    <span style="font-size:8px;font-weight:600;word-break:break-word">${condition}</span>
   </div>`;
 }

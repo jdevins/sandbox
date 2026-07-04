@@ -6,8 +6,8 @@ export const definition = {
   description: 'Exception handler. Catches errors from upstream and routes to a recovery path.',
   category: 'flow',
   shape: 'shield',
-  defaultW: 68,
-  defaultH: 66,
+  defaultW: 46,
+  defaultH: 44,
   payloadSchema: { catches: 'string', action: 'string' },
   fieldHints: {
     catches: 'Error types to handle, e.g. "timeout, validation" or "*" for all',
@@ -22,8 +22,7 @@ export function render(payload) {
   const catches = esc(payload?.catches || '!');
   const action = payload?.action ? esc(payload.action) : null;
   return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:85%;gap:3px;text-align:center;padding:0 8px">
-    <span style="font-size:16px;font-weight:700">!</span>
-    <span style="font-size:10px;font-weight:600;word-break:break-word">${catches}</span>
-    ${action ? `<span style="font-size:9px;opacity:.65">${action}</span>` : ''}
+    <span style="font-size:13px;font-weight:700">!</span>
+    <span style="font-size:8px;font-weight:600">${catches}</span>
   </div>`;
 }

@@ -26,7 +26,7 @@
     "createdAt": "2026-07-02T04:03:04.223Z",
     "id": "card_mr2zbelb1tln",
     "kind": "memory",
-    "x": 800,
+    "x": 820,
     "y": 440
   },
   {
@@ -107,67 +107,55 @@
     "w": 180,
     "h": 120,
     "payload": {
-      "label": ""
-    },
-    "createdAt": "2026-07-04T03:33:46.034Z",
-    "id": "card_mr5t5faqp8sf",
-    "kind": "start",
-    "x": 60,
-    "y": 40
-  },
-  {
-    "schemaVersion": 1,
-    "w": 180,
-    "h": 120,
-    "payload": {
-      "label": ""
-    },
-    "createdAt": "2026-07-04T03:34:03.021Z",
-    "id": "card_mr5t5sel7v5x",
-    "kind": "end",
-    "x": 1500,
-    "y": 660
-  },
-  {
-    "schemaVersion": 1,
-    "w": 180,
-    "h": 120,
-    "payload": {
-      "target": "Step 2",
-      "maxIterations": "10"
-    },
-    "createdAt": "2026-07-04T03:34:20.419Z",
-    "id": "card_mr5t65tvlyvn",
-    "kind": "loop-back",
-    "x": 1420,
-    "y": 40
-  },
-  {
-    "schemaVersion": 1,
-    "w": 180,
-    "h": 120,
-    "payload": {
-      "strategy": "all",
-      "label": "Join"
-    },
-    "createdAt": "2026-07-04T03:35:03.213Z",
-    "id": "card_mr5t72ulnln9",
-    "kind": "join",
-    "x": 1220,
-    "y": 440
-  },
-  {
-    "schemaVersion": 1,
-    "w": 180,
-    "h": 120,
-    "payload": {
       "condition": "approved?",
       "outputs": "yes, no"
     },
-    "createdAt": "2026-07-04T03:35:26.651Z",
-    "id": "card_mr5t7kxn0iaz",
+    "createdAt": "2026-07-04T03:52:27.572Z",
+    "id": "card_mr5ttgoj87ym",
     "kind": "branch",
-    "x": 1600,
-    "y": 260
+    "x": 1580,
+    "y": 280
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "label": ""
+    },
+    "createdAt": "2026-07-04T03:52:34.464Z",
+    "id": "card_mr5ttm00bf85",
+    "kind": "start",
+    "x": 20,
+    "y": 160
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "label": ""
+    },
+    "createdAt": "2026-07-04T03:52:53.222Z",
+    "id": "card_mr5tu0h2y1t0",
+    "kind": "merge",
+    "x": 1340,
+    "y": 500
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "name": "search_files",
+      "callType": "function",
+      "io": "read",
+      "args": "{ "
+    },
+    "createdAt": "2026-07-04T03:55:35.202Z",
+    "id": "card_mr5txhghi6ra",
+    "kind": "tool-call",
+    "x": 40,
+    "y": 40
   }
 ]

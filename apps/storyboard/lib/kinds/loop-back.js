@@ -6,8 +6,8 @@ export const definition = {
   description: 'Explicit repeat marker. Draws attention to a backward edge that forms a loop.',
   category: 'flow',
   shape: 'circle',
-  defaultW: 52,
-  defaultH: 52,
+  defaultW: 40,
+  defaultH: 40,
   payloadSchema: { target: 'string', maxIterations: 'string' },
   fieldHints: {
     target: 'Label or ID of the node this loops back to',
@@ -22,7 +22,7 @@ export function render(payload) {
   const target = payload?.target ? esc(payload.target) : null;
   const max = payload?.maxIterations ? esc(payload.maxIterations) : null;
   return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:2px;text-align:center">
-    <span style="font-size:18px">↩</span>
+    <span style="font-size:14px">↩</span>
     ${target ? `<span style="font-size:9px;font-weight:600;word-break:break-word">${target}</span>` : ''}
     ${max ? `<span style="font-size:8px;opacity:.55">×${max}</span>` : ''}
   </div>`;

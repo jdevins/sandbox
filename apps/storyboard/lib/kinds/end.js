@@ -6,8 +6,8 @@ export const definition = {
   description: 'Flow terminal. Marks where execution completes.',
   category: 'flow',
   shape: 'circle',
-  defaultW: 52,
-  defaultH: 52,
+  defaultW: 40,
+  defaultH: 40,
   payloadSchema: { label: 'string' },
   fieldHints: { label: 'Optional label, e.g. "Done" or "Error exit"' },
   actions: ['edit', 'delete'],
@@ -17,7 +17,7 @@ export const definition = {
 export function render(payload) {
   const label = esc(payload?.label || '');
   return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:2px">
-    <span style="font-size:18px;line-height:1">⏹</span>
+    <span style="font-size:12px;line-height:1">⏹</span>
     ${label ? `<span style="font-size:9px;font-weight:600;letter-spacing:.03em">${label}</span>` : ''}
   </div>`;
 }
