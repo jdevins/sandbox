@@ -6,18 +6,18 @@ export const definition = {
   description: 'Flow entry point. Marks where execution begins.',
   category: 'flow',
   shape: 'circle',
-  defaultW: 80,
-  defaultH: 80,
+  defaultW: 52,
+  defaultH: 52,
   payloadSchema: { label: 'string' },
   fieldHints: { label: 'Optional label, e.g. "Trigger" or "Begin"' },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 
 export function render(payload) {
-  const label = esc(payload?.label || 'Start');
-  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:3px">
-    <span style="font-size:18px">▶</span>
-    <span style="font-size:10px;font-weight:600;letter-spacing:.03em">${label}</span>
+  const label = esc(payload?.label || '');
+  return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:2px">
+    <span style="font-size:22px;line-height:1">▶</span>
+    ${label ? `<span style="font-size:9px;font-weight:600;letter-spacing:.03em">${label}</span>` : ''}
   </div>`;
 }

@@ -1,10 +1,10 @@
 {
   "backlog-review": {
     "status": "ok",
-    "output": "Note: the backlog has no items with status `pending`, `in-progress`, or `blocked` — actual statuses present are `groomed`, `on-hold`, and `ready-to-groom`. Reporting against those instead.\n\n**Pending (status: ready-to-groom / groomed)**\n- mq7textw — Standard — textarea display (wrap, copy, pretty-print) — *standard*, ready-to-groom\n- mqjivy2d — A full loop — *feature*, groomed\n- mqjiuds2 — Agent - 12thMan — *feature*, groomed\n\n**In Progress** — none. No items carry an in-progress-equivalent status.\n\n**Blockers** — none formally blocked. Closest equivalents are the 5 `on-hold` items (Pixel Foundry scenarios, Session Repack full-text search, Playwright app, Mermaid app, HTML Form Viewer) — all on-hold likely because none are `approvedForBuild` yet, not because of an external blocker.\n\nThe two `groomed` features also carry groomer annotations flagging vagueness (no concrete trigger/output spec) as the practical blocker to approval.\n\n**Next priority recommendation:** mq7textw (textarea standard). It's the only item at `ready-to-groom`, has no vagueness flags, is scoped as a standard + shared implementation (clear, bounded surface), and unblocks consistency across multiple apps rather than adding one more isolated feature.\n\n---\nRun timestamp: 2026-06-24T (local run, exact time not exposed to this tool environment).\nToken spend: not available — this agent has no access to its own token usage metering.\n",
-    "startedAt": "2026-06-24T12:00:00.035Z",
-    "lastRun": "2026-06-24T12:00:30.758Z",
-    "finishedAt": "2026-06-24T12:00:30.758Z",
+    "output": "**Backlog Review** (no items have status `pending`/`in-progress`/`blocked` — actual statuses found: `ready-to-groom`, `groomed`, `on-hold`, `ready`. Mapping closest equivalents below.)\n\n**Pending (ready-to-groom / groomed / ready)**\n- mqsdppg5 — node --test stalled 30+min once (bug, ready-to-groom)\n- mqjivy2d — A full loop (feature, groomed)\n- mqjiuds2 — Agent - 12thMan (feature, groomed)\n- mq7textw — Standard: textarea display (standard, ready-to-groom)\n- mq6plw02 — App: Mermaid Diagrams (feature, ready, **approvedForBuild: true**)\n\n**In Progress**\n- None found.\n\n**Blockers**\n- None marked `blocked`. Closest concern: mqjivy2d and mqjiuds2 are groomed but flagged by the groomer agent as vague/low-value — effectively stalled pending a concrete use case, not externally blocked.\n\n**On-hold (not requested but notable)**\n- mqjirtc7 (Pixel Foundry scenarios), mqjsrch1 (JSONL search), mq6plw01 (Playwright app), mq6plw03 (HTML Form Viewer)\n\n**Next priority:** mq6plw02 — App: Mermaid Diagrams. It's the only item both `ready` and `approvedForBuild: true`, meaning it's already cleared the groom/approval gate and is unblocked to start.\n\n---\nRun: 2026-06-30T00:00:00Z (automated session) · Token spend: not tracked by this tool/session — no usage metering available in this context.\n",
+    "startedAt": "2026-06-30T12:00:00.025Z",
+    "lastRun": "2026-06-30T12:00:25.240Z",
+    "finishedAt": "2026-06-30T12:00:25.240Z",
     "history": [
       {
         "ts": "2026-06-18T03:45:10.100Z",
@@ -53,8 +53,15 @@
         "status": "ok",
         "ms": 30723,
         "summary": "Note: the backlog has no items with status `pending`, `in-progress`, or `blocked"
+      },
+      {
+        "ts": "2026-06-30T12:00:25.240Z",
+        "status": "ok",
+        "ms": 25215,
+        "summary": "**Backlog Review** (no items have status `pending`/`in-progress`/`blocked` — act"
       }
-    ]
+    ],
+    "context": null
   },
   "backlog-groom": {
     "status": "ok",

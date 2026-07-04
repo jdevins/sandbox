@@ -6,15 +6,15 @@ export const definition = {
   description: 'Fan-in — waits for all parallel paths to complete before continuing.',
   category: 'flow',
   shape: 'wide-rect',
-  defaultW: 140,
-  defaultH: 44,
+  defaultW: 100,
+  defaultH: 32,
   payloadSchema: { strategy: 'string', label: 'string' },
   fieldHints: {
     strategy: '"all" waits for every path (default). "first" continues on the first to finish.',
     label: 'Optional label',
   },
   exampleCard: { kind: 'join', payload: { strategy: 'all', label: 'Join' } },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 

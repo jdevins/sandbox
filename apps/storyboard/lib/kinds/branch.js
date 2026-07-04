@@ -6,15 +6,15 @@ export const definition = {
   description: 'Deterministic conditional fork. Evaluates an expression and routes to a path.',
   category: 'flow',
   shape: 'diamond',
-  defaultW: 110,
-  defaultH: 90,
+  defaultW: 88,
+  defaultH: 72,
   payloadSchema: { condition: 'string', outputs: 'string' },
   fieldHints: {
     condition: 'Expression or field to evaluate, e.g. "status == approved" or "score > 0.8"',
     outputs: 'Comma-separated path names, e.g. "yes, no" or "pass, fail, retry"',
   },
   exampleCard: { kind: 'branch', payload: { condition: 'approved?', outputs: 'yes, no' } },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 

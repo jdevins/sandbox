@@ -6,15 +6,15 @@ export const definition = {
   description: 'Exception handler. Catches errors from upstream and routes to a recovery path.',
   category: 'flow',
   shape: 'shield',
-  defaultW: 90,
-  defaultH: 88,
+  defaultW: 68,
+  defaultH: 66,
   payloadSchema: { catches: 'string', action: 'string' },
   fieldHints: {
     catches: 'Error types to handle, e.g. "timeout, validation" or "*" for all',
     action: '"retry", "escalate", "skip", or a label for the recovery path',
   },
   exampleCard: { kind: 'error', payload: { catches: '*', action: 'retry' } },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 

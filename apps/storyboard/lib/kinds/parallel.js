@@ -6,11 +6,11 @@ export const definition = {
   description: 'Fan-out — all outgoing paths run simultaneously.',
   category: 'flow',
   shape: 'wide-rect',
-  defaultW: 140,
-  defaultH: 44,
+  defaultW: 100,
+  defaultH: 32,
   payloadSchema: { label: 'string' },
   fieldHints: { label: 'Optional label for this fan-out step' },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 

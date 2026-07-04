@@ -6,15 +6,15 @@ export const definition = {
   description: 'Explicit repeat marker. Draws attention to a backward edge that forms a loop.',
   category: 'flow',
   shape: 'circle',
-  defaultW: 72,
-  defaultH: 72,
+  defaultW: 52,
+  defaultH: 52,
   payloadSchema: { target: 'string', maxIterations: 'string' },
   fieldHints: {
     target: 'Label or ID of the node this loops back to',
     maxIterations: 'Optional guard, e.g. "10" to cap runaway loops',
   },
   exampleCard: { kind: 'loop-back', payload: { target: 'Step 2', maxIterations: '10' } },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 

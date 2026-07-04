@@ -230,7 +230,7 @@ export function createApp({ name }) {
         .sb-clean .sb-card { border-radius:8px; cursor:default; }
         .sb-clean .sb-resize { display:none; }
         .sb-clean .sb-port { display:none; }
-        .sb-flow-card { border:none !important; cursor:grab; overflow:visible; }
+        .sb-flow-card { border:none !important; cursor:grab; overflow:visible; min-width:0; min-height:0; }
         .sb-flow-card .sb-card-head { display:none; }
         .sb-flow-card .sb-card-body { padding:0; height:100%; pointer-events:none; }
         .sb-flow-card .sb-resize { display:none; }
@@ -275,8 +275,7 @@ export function createApp({ name }) {
         </div>
         <div class="sb-radial" id="sb-radial">
           <button data-action="edit"   style="left:42px;top:0"   title="Edit card contents">Edit</button>
-          <button data-action="link"   style="left:84px;top:42px" title="Link to another card">Link</button>
-          <button data-action="delete" style="left:0;top:42px"   title="Delete card">Del</button>
+          <button data-action="delete" style="left:42px;top:84px" title="Delete card">Del</button>
         </div>
       </div>
 

@@ -466,10 +466,18 @@
     wireResize(el, card);
     wirePorts(el, card);
 
-    el.querySelector('.sb-dots').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openRadial(el, card);
-    });
+    if (!isFlow) {
+      el.querySelector('.sb-dots').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openRadial(el, card);
+      });
+    } else {
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('.sb-port')) return;
+        e.stopPropagation();
+        openRadial(el, card);
+      });
+    }
 
     el.addEventListener('pointerdown', () => {
       if (linkMode && linkMode !== card.id) {

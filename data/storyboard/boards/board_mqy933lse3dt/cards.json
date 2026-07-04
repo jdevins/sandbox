@@ -4,15 +4,15 @@
     "w": 180,
     "h": 120,
     "payload": {
-      "metric": "acuracy",
-      "criteria": "Response contains desired outputs",
-      "passCondition": ".75"
+      "metric": "completeness",
+      "criteria": "Match Count",
+      "passCondition": "Output contains \"words\" array and \"totalCount\" object "
     },
     "createdAt": "2026-07-02T04:02:23.519Z",
     "id": "card_mr2zaj6nlx0y",
     "kind": "eval",
-    "x": 880,
-    "y": 240
+    "x": 1340,
+    "y": 260
   },
   {
     "schemaVersion": 1,
@@ -21,55 +21,153 @@
     "payload": {
       "key": "log",
       "io": "write",
-      "description": "token count"
+      "description": "log run start, run end tme, duration."
     },
     "createdAt": "2026-07-02T04:03:04.223Z",
     "id": "card_mr2zbelb1tln",
     "kind": "memory",
-    "x": 620,
-    "y": 540
+    "x": 800,
+    "y": 440
   },
   {
     "schemaVersion": 1,
     "w": 180,
     "h": 120,
     "payload": {
-      "name": "Summarizer",
+      "name": "transposer",
       "model": "claude-sonnet-4-6",
-      "systemPrompt": "You summarize text concisely"
+      "systemPrompt": "You create json array from each word in text"
     },
     "createdAt": "2026-07-02T04:05:14.369Z",
     "id": "card_mr2ze70h884x",
     "kind": "agent",
-    "x": 620,
-    "y": 240
+    "x": 660,
+    "y": 160
   },
   {
     "schemaVersion": 1,
     "w": 180,
     "h": 120,
     "payload": {
-      "format": "Text",
-      "destination": "TextBox",
-      "description": "Summary output"
+      "format": "JSON",
+      "destination": "C:\\A2",
+      "description": "Agent output"
     },
     "createdAt": "2026-07-02T04:06:07.746Z",
     "id": "card_mr2zfc76b4js",
     "kind": "output",
-    "x": 1160,
-    "y": 240
+    "x": 960,
+    "y": 180
   },
   {
     "schemaVersion": 1,
     "w": 180,
     "h": 120,
     "payload": {
-      "text": "# Heading\n\nI am having a hard time converting from procedural brain to agent brain.  I really hope I can think through how to implement agent work instead of hitting a wall when it comes time to build it."
+      "text": "I am having a hard time converting from procedural brain to agent brain.  I really hope I can think through how to implement agent work instead of hitting a wall when it comes time to build it."
     },
     "createdAt": "2026-07-02T04:08:11.671Z",
     "id": "card_mr2zhztjwsnl",
     "kind": "markdown",
-    "x": 320,
-    "y": 240
+    "x": 220,
+    "y": 160
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "format": "JSON",
+      "destination": "Run Log",
+      "description": "Log of agent runs"
+    },
+    "createdAt": "2026-07-02T13:45:20.010Z",
+    "id": "card_mr3k477uu6mr",
+    "kind": "output",
+    "x": 820,
+    "y": 680
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "name": "Character Counter",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You count characters in text and add a json object to the output for total character count"
+    },
+    "createdAt": "2026-07-02T13:48:17.265Z",
+    "id": "card_mr3k7zzlu1dl",
+    "kind": "agent",
+    "x": 460,
+    "y": 320
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "label": ""
+    },
+    "createdAt": "2026-07-04T03:33:46.034Z",
+    "id": "card_mr5t5faqp8sf",
+    "kind": "start",
+    "x": 60,
+    "y": 40
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "label": ""
+    },
+    "createdAt": "2026-07-04T03:34:03.021Z",
+    "id": "card_mr5t5sel7v5x",
+    "kind": "end",
+    "x": 1500,
+    "y": 660
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "target": "Step 2",
+      "maxIterations": "10"
+    },
+    "createdAt": "2026-07-04T03:34:20.419Z",
+    "id": "card_mr5t65tvlyvn",
+    "kind": "loop-back",
+    "x": 1420,
+    "y": 40
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "strategy": "all",
+      "label": "Join"
+    },
+    "createdAt": "2026-07-04T03:35:03.213Z",
+    "id": "card_mr5t72ulnln9",
+    "kind": "join",
+    "x": 1220,
+    "y": 440
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "condition": "approved?",
+      "outputs": "yes, no"
+    },
+    "createdAt": "2026-07-04T03:35:26.651Z",
+    "id": "card_mr5t7kxn0iaz",
+    "kind": "branch",
+    "x": 1600,
+    "y": 260
   }
 ]

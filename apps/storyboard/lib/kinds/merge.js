@@ -6,11 +6,11 @@ export const definition = {
   description: 'Joins multiple branch paths back into one. First arrival continues execution.',
   category: 'flow',
   shape: 'trapezoid',
-  defaultW: 110,
-  defaultH: 72,
+  defaultW: 88,
+  defaultH: 54,
   payloadSchema: { label: 'string' },
   fieldHints: { label: 'Optional label, e.g. "Rejoin" or "Converge"' },
-  actions: ['delete'],
+  actions: ['edit', 'delete'],
   renderMode: 'inline',
 };
 

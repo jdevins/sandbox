@@ -25,7 +25,7 @@ export function createFeature(ctx) {
     const skills = await store.list();
     const cards = skills.map((s) =>
       ui.card({
-        title: s.name || s.id,
+        title: html`<a href="${base}/${s.owner}/${s.id}">${s.name || s.id}</a>`,
         badge: html`${ui.badge(s.owner)}${s.broken ? ui.badge('broken', 'errored') : ''}`,
         desc: s.description,
         actions: [
@@ -42,6 +42,35 @@ export function createFeature(ctx) {
       })}
       ${skills.length ? ui.grid(cards) : ui.empty('No skills yet.')}`;
     res.send(shell('Skills Registry', body));
+  });
+
+  // ---- Detail: show the skill's metadata and full source ----
+  router.get('/:owner/:id', async (req, res) => {
+    const { owner, id } = req.params;
+    let def, source;
+    try {
+      ({ definition: def } = await store.get(owner, id));
+      source = await store.source(owner, id);
+    } catch (err) {
+      return res.send(shell('Missing', ui.empty(`Could not load "${owner}/${id}": ${err.message}`)));
+    }
+
+    const inputsList = (def.inputs || []).map(
+      (f) => html`<li><code>${f.name}</code> (${f.type || 'string'})${f.required ? ' — required' : ''}${f.help ? html` — ${f.help}` : ''}</li>`,
+    );
+    const testsList = (def.tests || []).map((t) => html`<li>${t.name || 'test'}</li>`);
+
+    const body = html`
+      ${ui.pageHead({
+        title: `📄 ${def.name || id}`,
+        subtitle: def.description,
+        actions: html`${ui.btn({ href: base, label: 'Registry' })}${ui.btn({ href: `${base}/${owner}/${id}/run`, label: 'Run', primary: true })}${ui.btn({ href: `${base}/${owner}/${id}/test`, label: 'Test (undoable)' })}${ui.btn({ href: `${base}/${owner}/${id}/export`, label: 'Export ⤓' })}`,
+      })}
+      ${panel('Owner', html`${ui.badge(owner)}`)}
+      ${inputsList.length ? panel('Inputs', html`<ul>${inputsList}</ul>`) : ''}
+      ${testsList.length ? panel('Tests', html`<ul>${testsList}</ul>`) : ''}
+      ${panel(`File: ${id}.skill.js`, html`<pre><code>${source}</code></pre>`)}`;
+    res.send(shell(def.name || id, body, [...crumb, { href: '#', label: def.name || id }]));
   });
 
   // ---- Export: zip the skill's source file as-is, no transformation ----
