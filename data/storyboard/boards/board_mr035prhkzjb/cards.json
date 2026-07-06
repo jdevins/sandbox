@@ -9,8 +9,8 @@
     "createdAt": "2026-06-30T03:27:28.808Z",
     "id": "card_mr035xk8rhxb",
     "kind": "markdown",
-    "x": 80,
-    "y": 100
+    "x": 280,
+    "y": 200
   },
   {
     "schemaVersion": 1,
@@ -48,7 +48,7 @@
     "createdAt": "2026-07-02T03:16:30.589Z",
     "id": "card_mr2xnj0dhsux",
     "kind": "sql",
-    "x": 560,
+    "x": 800,
     "y": 20
   },
   {
@@ -76,8 +76,23 @@
     "createdAt": "2026-07-02T03:16:46.618Z",
     "id": "card_mr2xnvdm2dbv",
     "kind": "xml",
-    "x": 1300,
-    "y": 200,
+    "x": 1360,
+    "y": 260,
     "frameId": "frame_mr2xt9266ojp"
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "gateType": "human",
+      "condition": "Is the output safe to send?",
+      "outputs": "allow, deny"
+    },
+    "createdAt": "2026-07-04T18:56:11.976Z",
+    "id": "card_mr6q3oi0gtzy",
+    "kind": "gate",
+    "x": 40,
+    "y": 40
   }
 ]

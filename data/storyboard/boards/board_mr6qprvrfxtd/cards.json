@@ -1,0 +1,59 @@
+[
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "label": ""
+    },
+    "createdAt": "2026-07-04T19:13:29.089Z",
+    "id": "card_mr6qpwqo91m5",
+    "kind": "start",
+    "x": 140,
+    "y": 260
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "system": "You are a helpful assistant.",
+      "user": "Summarize the input."
+    },
+    "createdAt": "2026-07-04T19:14:13.406Z",
+    "id": "card_mr6qquxq0jrl",
+    "kind": "prompt",
+    "x": 380,
+    "y": 220
+  },
+  {
+    "schemaVersion": 1,
+    "w": 220,
+    "h": 140,
+    "payload": {
+      "name": "Summarizer",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You summarize documents concisely."
+    },
+    "createdAt": "2026-07-04T19:15:54.324Z",
+    "id": "card_mr6qt0t0ylk2",
+    "kind": "agent",
+    "x": 640,
+    "y": 220
+  },
+  {
+    "schemaVersion": 1,
+    "w": 180,
+    "h": 120,
+    "payload": {
+      "format": "Markdown",
+      "destination": "ui",
+      "description": "Structured summary returned to caller"
+    },
+    "createdAt": "2026-07-04T19:17:37.717Z",
+    "id": "card_mr6qv8l1ywts",
+    "kind": "output",
+    "x": 960,
+    "y": 220
+  }
+]

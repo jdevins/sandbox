@@ -20,7 +20,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.4.0',
+  version: '0.5.0',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -109,11 +109,26 @@ export function createApp({ name }) {
     res.type('html').send(`<!doctype html><html data-theme="dark"><head>
       <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>${esc(board.name)} · Storyboard</title><link rel="stylesheet" href="/static/css/dark.css">
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/drawflow@0.0.60/dist/drawflow.min.css">
       <style>
         .sb-toolbar { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); }
-        .sb-canvas { position:relative; width:100%; height:calc(100vh - 56px); overflow:auto;
+        .sb-canvas { position:relative; width:100%; height:calc(100vh - 56px); overflow:hidden;
           background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: ${GRID}px ${GRID}px; }
-        .sb-zoom-layer { position:relative; transform-origin: 0 0; }
+        #drawflow { position:absolute; inset:0; }
+        /* drawflow.min.css's own .drawflow .drawflow-node rule outranks a plain .sb-card on
+           background/border/flex-direction (2 class selectors vs 1) — match its specificity
+           here (3 classes) rather than fighting it with !important. flex-direction:row keeps
+           .inputs/.outputs side-by-side with the content so ports stay vertically centered. */
+        .drawflow .drawflow-node { padding:0; width:auto; min-height:0; flex-direction:row; }
+        .drawflow .drawflow-node.sb-card { background:var(--bg-elev); border:1px solid var(--border); color:var(--text); }
+        .drawflow .drawflow-node .drawflow_content_node { display:flex; flex-direction:column; align-self:stretch; }
+        .drawflow .drawflow-node.selected { background:var(--bg-elev); border-color:var(--accent); }
+        .drawflow .drawflow-node .input, .drawflow .drawflow-node .output {
+          width:10px; height:10px; background:var(--text-dim); border:2px solid var(--bg-elev); border-radius:50%; }
+        .drawflow .drawflow-node .input { left:-16px; }
+        .drawflow .drawflow-node .output { right:-16px; }
+        .drawflow .connection .main-path { stroke:var(--text-dim); stroke-width:2px; }
+        .drawflow .connection .main-path:hover { stroke:var(--accent); cursor:pointer; }
         .sb-zoom { display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
         .sb-zoom button { background:var(--bg-elev); color:var(--text); border:0; border-right:1px solid var(--border);
           padding:5px 9px; font-size:12px; cursor:pointer; line-height:1; }
@@ -129,16 +144,6 @@ export function createApp({ name }) {
         .sb-kind-label { flex:1; }
         .sb-card-body { flex:1; overflow:auto; font-size:13px; min-height:0; padding:8px; }
         .sb-card-body:has(iframe) { padding:0; }
-        .sb-port { position:absolute; width:26px; height:26px; display:flex; align-items:center; justify-content:center;
-          font-size:20px; font-weight:700; line-height:1; color:var(--text-dim); opacity:0; transition:opacity .12s, color .12s, transform .12s;
-          cursor:crosshair; z-index:6; pointer-events:none; text-shadow:0 0 4px var(--bg);
-          -webkit-text-stroke: 1.5px currentColor; paint-order: stroke fill; }
-        .sb-card:hover .sb-port { opacity:0.55; pointer-events:auto; }
-        .sb-port:hover { opacity:1 !important; color:var(--accent); transform:scale(1.3); }
-        .sb-port[data-side="top"]    { top:-24px;  left:calc(50% - 13px); }
-        .sb-port[data-side="right"]  { right:-24px; top:calc(50% - 13px); }
-        .sb-port[data-side="bottom"] { bottom:-24px; left:calc(50% - 13px); }
-        .sb-port[data-side="left"]   { left:-24px; top:calc(50% - 13px); }
         .sb-edge-toolbar { display:flex; gap:3px; background:var(--bg-elev-2); border:1px solid var(--border);
           border-radius:8px; padding:3px; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
         .sb-edge-toolbar button { width:24px; height:24px; border-radius:6px; padding:0; font-size:13px; line-height:1;
@@ -150,7 +155,8 @@ export function createApp({ name }) {
         .sb-card-body p, .sb-card-body h3, .sb-card-body h4, .sb-card-body ul { margin:0 0 8px; padding:0; }
         .sb-card-body ul { padding-left:18px; }
         .sb-card-body p:last-child, .sb-card-body h3:last-child, .sb-card-body h4:last-child, .sb-card-body ul:last-child { margin-bottom:0; }
-        .sb-dots { font-size:11px; padding:0 4px; flex:none; }
+        .sb-dots { font-size:11px; padding:0 4px; flex:none; background:transparent; border:0; color:var(--text-dim); cursor:pointer; }
+        .sb-dots:hover { color:var(--accent); }
         .sb-resize { position:absolute; right:0; bottom:0; width:14px; height:14px; cursor:se-resize;
           background:linear-gradient(135deg, transparent 50%, var(--border) 50%); border-bottom-right-radius:8px; }
         .sb-resize:hover { background:linear-gradient(135deg, transparent 50%, var(--accent) 50%); }
@@ -158,7 +164,6 @@ export function createApp({ name }) {
         .sb-radial button { position:absolute; width:36px; height:36px; border-radius:50%; padding:0; font-size:10px; line-height:1;
           background:var(--bg-elev-2); color:var(--text); border:1px solid var(--border); }
         .sb-radial button:hover { border-color:var(--accent); color:var(--accent); }
-        #sb-edges { position:absolute; top:0; left:0; pointer-events:none; }
         #sb-edge-toolbar-layer { position:absolute; top:0; left:0; pointer-events:none; }
         #sb-edge-toolbar-layer .sb-edge-toolbar { position:absolute; pointer-events:auto; }
         #sb-frames-layer { position:absolute; top:0; left:0; pointer-events:none; }
@@ -242,7 +247,7 @@ export function createApp({ name }) {
         .sb-clean .sb-card-head { display:none; }
         .sb-clean .sb-card { border-radius:8px; cursor:default; }
         .sb-clean .sb-resize { display:none; }
-        .sb-clean .sb-port { display:none; }
+        .sb-clean .drawflow-node .input, .sb-clean .drawflow-node .output { display:none; }
         .sb-flow-card {
           border:none !important; background:transparent !important;
           cursor:grab; overflow:visible; min-width:0; min-height:0; isolation:isolate;
@@ -293,11 +298,9 @@ export function createApp({ name }) {
         </div>
       </div>
       <div class="sb-canvas" id="sb-canvas">
-        <div class="sb-zoom-layer" id="sb-zoom-layer">
-          <div id="sb-frames-layer"></div>
-          <svg id="sb-edges"></svg>
-          <div id="sb-edge-toolbar-layer"></div>
-        </div>
+        <div id="drawflow"></div>
+        <div id="sb-frames-layer"></div>
+        <div id="sb-edge-toolbar-layer"></div>
         <div class="sb-radial" id="sb-radial">
           <button data-action="edit"   style="left:42px;top:0"   title="Edit card contents">Edit</button>
           <button data-action="delete" style="left:42px;top:84px" title="Delete card">Del</button>
@@ -352,6 +355,7 @@ export function createApp({ name }) {
         const BOARD_ID = ${JSON.stringify(board.id)};
         const GRID = ${GRID};
       </script>
+      <script src="https://cdn.jsdelivr.net/npm/drawflow@0.0.60/dist/drawflow.min.js"></script>
       <script src="${base}/assets/canvas.js?v=${LOADED_AT}"></script>
       <script src="${base}/assets/sb-chat.js?v=${LOADED_AT}"></script>
       ${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}

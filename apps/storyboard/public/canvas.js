@@ -1,17 +1,25 @@
 (function () {
   const canvas = document.getElementById('sb-canvas');
-  const zoomLayer = document.getElementById('sb-zoom-layer');
-  const edgesSvg = document.getElementById('sb-edges');
-  const edgeToolbarLayer = document.getElementById('sb-edge-toolbar-layer');
+  const dfContainer = document.getElementById('drawflow');
   const framesLayer = document.getElementById('sb-frames-layer');
+  const edgeToolbarLayer = document.getElementById('sb-edge-toolbar-layer');
   const radial = document.getElementById('sb-radial');
+
   let contract = null;
   let cards = [];
   let edges = [];
   let frames = [];
   let linkMode = null;
   let radialFor = null;
+  let selectedEdgeId = null;
+  let pendingEdge = null;          // set right before a programmatic addConnection() replaying a known edge
+  let pendingSelectAfterCreate = false;
   let cleanView = localStorage.getItem(`sb-clean-${BOARD_ID}`) === '1';
+
+  const cardIdToNode = new Map();  // card.id -> drawflow numeric node id
+  const nodeIdToCard = new Map();  // drawflow numeric node id -> card object
+  const edgeKeyToId = new Map();   // "out:in:outClass:inClass" -> edge.id
+  const edgeIdToKey = new Map();   // edge.id -> key
 
   function setCleanView(v) {
     cleanView = v;
@@ -20,49 +28,35 @@
     const btn = document.querySelector('[data-action="clean-view"]');
     if (btn) btn.textContent = v ? '✓ Clean view' : 'Clean view';
   }
-  let portDrag = null;   // { fromCard, fromEl, x1, y1 }
-  let selectedEdge = null;
-  let zoom = 1;
 
-  // ── Zoom ─────────────────────────────────────────────────────────────────
+  // ── Drawflow setup ───────────────────────────────────────────────────────
+  const editor = new Drawflow(dfContainer);
+  editor.reroute = false;
+  editor.zoom_min = 0.25;
+  editor.zoom_max = 2;
+  editor.start();
+  editor.precanvas.appendChild(framesLayer);
+  editor.precanvas.appendChild(edgeToolbarLayer);
+  // Any mousedown inside these overlay layers belongs to our own custom
+  // drag logic — stop it from also bubbling to Drawflow's container-level
+  // mousedown handler, which would otherwise start a node/canvas drag too.
+  framesLayer.addEventListener('mousedown', (e) => e.stopPropagation());
+  edgeToolbarLayer.addEventListener('mousedown', (e) => e.stopPropagation());
+
   function toModel(clientX, clientY) {
-    const c = canvas.getBoundingClientRect();
-    return { x: (clientX - c.left + canvas.scrollLeft) / zoom, y: (clientY - c.top + canvas.scrollTop) / zoom };
-  }
-
-  function updateLayerSize() {
-    const maxX = Math.max(1000, canvas.clientWidth / zoom, ...cards.map((c) => c.x + (c.w || 200) + 300), ...frames.map((f) => f.x + f.w + 300));
-    const maxY = Math.max(700, canvas.clientHeight / zoom, ...cards.map((c) => c.y + (c.h || 120) + 300), ...frames.map((f) => f.y + f.h + 300));
-    zoomLayer.style.width = maxX + 'px';
-    zoomLayer.style.height = maxY + 'px';
-    edgesSvg.setAttribute('width', maxX);
-    edgesSvg.setAttribute('height', maxY);
+    const r = dfContainer.getBoundingClientRect();
+    return {
+      x: (clientX - r.left - editor.canvas_x) / editor.zoom,
+      y: (clientY - r.top - editor.canvas_y) / editor.zoom,
+    };
   }
 
   const zoomLabel = document.getElementById('sb-zoom-reset');
-
-  function zoomAt(newZoom, clientX, clientY) {
-    const c = canvas.getBoundingClientRect();
-    const cx = clientX ?? (c.left + canvas.clientWidth / 2);
-    const cy = clientY ?? (c.top + canvas.clientHeight / 2);
-    const before = toModel(cx, cy);
-    zoom = Math.min(2, Math.max(0.25, newZoom));
-    zoomLayer.style.transform = `scale(${zoom})`;
-    updateLayerSize();
-    canvas.scrollLeft = before.x * zoom - (cx - c.left);
-    canvas.scrollTop = before.y * zoom - (cy - c.top);
-    zoomLabel.textContent = Math.round(zoom * 100) + '%';
-    drawEdges();
-  }
-
-  document.getElementById('sb-zoom-in').addEventListener('click', () => zoomAt(zoom + 0.1));
-  document.getElementById('sb-zoom-out').addEventListener('click', () => zoomAt(zoom - 0.1));
-  zoomLabel.addEventListener('click', () => zoomAt(1));
-  canvas.addEventListener('wheel', (e) => {
-    if (!(e.ctrlKey || e.metaKey)) return;
-    e.preventDefault();
-    zoomAt(zoom * (e.deltaY < 0 ? 1.1 : 0.9), e.clientX, e.clientY);
-  }, { passive: false });
+  function syncZoomLabel() { zoomLabel.textContent = Math.round(editor.zoom * 100) + '%'; }
+  editor.on('zoom', syncZoomLabel);
+  document.getElementById('sb-zoom-in').addEventListener('click', () => editor.zoom_in());
+  document.getElementById('sb-zoom-out').addEventListener('click', () => editor.zoom_out());
+  zoomLabel.addEventListener('click', () => editor.zoom_reset());
 
   const KIND_ICONS = {
     markdown: '¶', json: '{}', html: '<>', xml: '</>', sql: 'DB',
@@ -84,32 +78,33 @@
     return palette[index % palette.length];
   }
 
+  function portNames(card) {
+    const raw = card?.payload?.outputs;
+    if (!raw) return [];
+    return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
   function portColorForEdge(edge) {
     if (!edge.sourcePort) return null;
     const fromCard = cards.find((c) => c.id === edge.from);
-    if (!fromCard?.payload?.outputs) return null;
-    const names = fromCard.payload.outputs.split(',').map((s) => s.trim()).filter(Boolean);
+    const names = portNames(fromCard);
     const idx = names.indexOf(edge.sourcePort);
     if (idx < 0) return null;
     const kindDef = contract?.kinds?.find((k) => k.id === fromCard.kind);
     return getPortColor(idx, kindDef?.outputColors);
   }
 
+  function edgeOutClassFor(edge, fromCard) {
+    if (!edge.sourcePort) return 'output_1';
+    const idx = portNames(fromCard).indexOf(edge.sourcePort);
+    return idx >= 0 ? `output_${idx + 1}` : 'output_1';
+  }
+
   const api = (path, opts) => fetch(BASE + path, opts).then((r) => (r.status === 204 ? null : r.json()));
 
-  // ── SVG setup ────────────────────────────────────────────────────────────
-  const edgesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  edgesGroup.id = 'sb-edges-content';
-  edgesSvg.appendChild(edgesGroup);
-
-  const rubberLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  rubberLine.setAttribute('stroke', 'var(--accent)');
-  rubberLine.setAttribute('stroke-width', '2');
-  rubberLine.setAttribute('stroke-dasharray', '5 4');
-  rubberLine.setAttribute('marker-end', 'url(#sb-arrow)');
-  rubberLine.setAttribute('pointer-events', 'none');
-  rubberLine.style.display = 'none';
-  edgesSvg.appendChild(rubberLine);
+  function cardCenter(card) {
+    return { x: card.x + (card.w || 200) / 2, y: card.y + (card.h || 120) / 2 };
+  }
 
   function closeRadial() {
     radial.style.display = 'none';
@@ -122,44 +117,195 @@
     document.querySelectorAll('.sb-card').forEach((el) => el.classList.toggle('linking', el.dataset.id === cardId));
   }
 
-  function cardCenter(card) {
-    return { x: card.x + (card.w || 200) / 2, y: card.y + (card.h || 120) / 2 };
+  // Arrow marker defs shared by every connection path (Drawflow doesn't add its own).
+  const markerHost = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  markerHost.style.cssText = 'position:absolute;width:0;height:0';
+  markerHost.innerHTML = `<defs>
+    <marker id="sb-arrow" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L0,8 L9,4 z" fill="var(--text-dim)"/>
+    </marker>
+    <marker id="sb-arrow-sel" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L0,8 L9,4 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="sb-arrow-ref" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L0,8 L9,4 z" fill="var(--accent-muted,#5a9a8a)"/>
+    </marker>`;
+  canvas.appendChild(markerHost);
+
+  function connSelector(outId, inId, outClass, inClass) {
+    return `.connection.node_out_node-${outId}.node_in_node-${inId}.${outClass}.${inClass}`;
   }
 
-  // Port positions in canvas coords
-  function portCoords(card, side) {
-    const w = card.w || 200, h = card.h || 120;
-    if (side === 'top')    return { x: card.x + w / 2, y: card.y };
-    if (side === 'right')  return { x: card.x + w,     y: card.y + h / 2 };
-    if (side === 'bottom') return { x: card.x + w / 2, y: card.y + h };
-    if (side === 'left')   return { x: card.x,         y: card.y + h / 2 };
+  function updateEdgeVisual(edge) {
+    const key = edgeIdToKey.get(edge.id);
+    if (!key) return;
+    const [outId, inId, outClass, inClass] = key.split(':');
+    const el = dfContainer.querySelector(connSelector(outId, inId, outClass, inClass));
+    if (!el) return;
+    const path = el.querySelector('.main-path');
+    const isRef = edge.type === 'reference';
+    const sel = selectedEdgeId === edge.id;
+    const portColor = portColorForEdge(edge);
+    const col = sel ? 'var(--accent)' : portColor || (isRef ? 'var(--accent-muted,#5a9a8a)' : 'var(--text-dim)');
+    const marker = sel ? 'url(#sb-arrow-sel)' : isRef ? 'url(#sb-arrow-ref)' : 'url(#sb-arrow)';
+    path.style.stroke = col;
+    path.style.strokeWidth = sel ? '2.5px' : isRef ? '1.5px' : '2px';
+    path.style.strokeDasharray = isRef ? '7 4' : '';
+    path.setAttribute('marker-end', marker);
+    el.classList.toggle('selected', sel);
   }
 
-  // Single-bend elbow path (axis-aligned) with a slightly rounded corner.
-  // Returns d, mx/my (toolbar anchor), cv1 (near source) and cv2 (near destination).
-  function elbowPath(x1, y1, x2, y2, r = 12) {
-    const dx = x2 - x1, dy = y2 - y1;
-    const [cx, cy] = Math.abs(dx) >= Math.abs(dy) ? [x2, y1] : [x1, y2];
-    const seg1 = Math.hypot(cx - x1, cy - y1);
-    const seg2 = Math.hypot(x2 - cx, y2 - cy);
-    const rr = Math.min(r, seg1, seg2);
-    const a1 = Math.atan2(cy - y1, cx - x1) * 180 / Math.PI;
-    const a2 = Math.atan2(y2 - cy, x2 - cx) * 180 / Math.PI;
-    // cv1 near source (30% into leg1), cv2 near destination (70% into leg2).
-    // Only show if the leg is long enough to not overlap the card border.
-    const MIN = 30;
-    const cv1 = seg1 >= MIN
-      ? { x: x1 + (cx - x1) * 0.3, y: y1 + (cy - y1) * 0.3, a: a1, show: true }
-      : { x: (x1 + cx) / 2, y: (y1 + cy) / 2, a: a1, show: false };
-    const cv2 = seg2 >= MIN
-      ? { x: cx + (x2 - cx) * 0.7, y: cy + (y2 - cy) * 0.7, a: a2, show: true }
-      : { x: (cx + x2) / 2, y: (cy + y2) / 2, a: a2, show: false };
-    if (rr < 1) return { d: `M${x1},${y1} L${cx},${cy} L${x2},${y2}`, mx: cx, my: cy, cv1, cv2 };
-    const t1x = cx + (x1 - cx) * (rr / seg1);
-    const t1y = cy + (y1 - cy) * (rr / seg1);
-    const t2x = cx + (x2 - cx) * (rr / seg2);
-    const t2y = cy + (y2 - cy) * (rr / seg2);
-    return { d: `M${x1},${y1} L${t1x},${t1y} Q${cx},${cy} ${t2x},${t2y} L${x2},${y2}`, mx: cx, my: cy, cv1, cv2 };
+  function registerConnection(edge, outId, inId, outClass, inClass) {
+    const key = `${outId}:${inId}:${outClass}:${inClass}`;
+    edgeKeyToId.set(key, edge.id);
+    edgeIdToKey.set(edge.id, key);
+    updateEdgeVisual(edge);
+  }
+
+  function attachEdge(edge) {
+    const fromNode = cardIdToNode.get(edge.from);
+    const toNode = cardIdToNode.get(edge.to);
+    if (fromNode == null || toNode == null) return;
+    const fromCard = cards.find((c) => c.id === edge.from);
+    const outClass = edgeOutClassFor(edge, fromCard);
+    pendingEdge = edge;
+    editor.addConnection(fromNode, toNode, outClass, 'input_1');
+    pendingEdge = null;
+  }
+
+  editor.on('connectionCreated', ({ output_id, input_id, output_class, input_class }) => {
+    if (pendingEdge) {
+      registerConnection(pendingEdge, output_id, input_id, output_class, input_class);
+      return;
+    }
+    const fromCard = nodeIdToCard.get(Number(output_id));
+    const toCard = nodeIdToCard.get(Number(input_id));
+    if (!fromCard || !toCard) return;
+    const names = portNames(fromCard);
+    const idx = Number(output_class.split('_')[1]) - 1;
+    const sourcePort = names[idx] || undefined;
+    api(`/api/boards/${BOARD_ID}/edges`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: fromCard.id, to: toCard.id, kind: 'link', sourcePort }),
+    }).then((edge) => {
+      edges.push(edge);
+      registerConnection(edge, output_id, input_id, output_class, input_class);
+      if (pendingSelectAfterCreate) {
+        selectedEdgeId = edge.id;
+        pendingSelectAfterCreate = false;
+        edges.forEach(updateEdgeVisual);
+        renderEdgeToolbar();
+      }
+    }).catch(() => {
+      editor.removeSingleConnection(output_id, input_id, output_class, input_class);
+    });
+  });
+
+  editor.on('connectionRemoved', ({ output_id, input_id, output_class, input_class }) => {
+    const key = `${output_id}:${input_id}:${output_class}:${input_class}`;
+    const edgeId = edgeKeyToId.get(key);
+    edgeKeyToId.delete(key);
+    if (!edgeId) return;
+    edgeIdToKey.delete(edgeId);
+    edges = edges.filter((e) => e.id !== edgeId);
+    if (selectedEdgeId === edgeId) { selectedEdgeId = null; renderEdgeToolbar(); }
+    api(`/api/boards/${BOARD_ID}/edges/${edgeId}`, { method: 'DELETE' });
+  });
+
+  editor.on('connectionSelected', ({ output_id, input_id, output_class, input_class }) => {
+    const key = `${output_id}:${input_id}:${output_class}:${input_class}`;
+    selectedEdgeId = edgeKeyToId.get(key) || null;
+    edges.forEach(updateEdgeVisual);
+    renderEdgeToolbar();
+  });
+  editor.on('connectionUnselected', () => {
+    selectedEdgeId = null;
+    edges.forEach(updateEdgeVisual);
+    renderEdgeToolbar();
+  });
+
+  editor.on('nodeMoved', (id) => {
+    const card = nodeIdToCard.get(Number(id));
+    if (!card) return;
+    const data = editor.getNodeFromId(id);
+    const snappedX = Math.round(data.pos_x / GRID) * GRID;
+    const snappedY = Math.round(data.pos_y / GRID) * GRID;
+    card.x = snappedX; card.y = snappedY;
+    const el = document.getElementById('node-' + id);
+    if (el) { el.style.left = snappedX + 'px'; el.style.top = snappedY + 'px'; }
+    editor.drawflow.drawflow[editor.module].data[id].pos_x = snappedX;
+    editor.drawflow.drawflow[editor.module].data[id].pos_y = snappedY;
+    editor.updateConnectionNodes('node-' + id);
+    const center = cardCenter(card);
+    const hostFrame = findFrameAt(center.x, center.y);
+    const newFrameId = hostFrame ? hostFrame.id : null;
+    const patch = { x: snappedX, y: snappedY };
+    if (newFrameId !== (card.frameId || null)) patch.frameId = newFrameId;
+    card.frameId = newFrameId;
+    api(`/api/boards/${BOARD_ID}/cards/${card.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    renderEdgeToolbar();
+  });
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('.drawflow-node') && !e.target.closest('.sb-radial')
+      && !e.target.closest('.connection') && !e.target.closest('#sb-edge-toolbar-layer')) {
+      closeRadial();
+      setLinkMode(null);
+    }
+  });
+
+  // ── Edge toolbar (shown for the selected connection) ────────────────────
+  function renderEdgeToolbar() {
+    const edge = edges.find((e) => e.id === selectedEdgeId);
+    if (!edge) { edgeToolbarLayer.innerHTML = ''; return; }
+    const a = cards.find((c) => c.id === edge.from);
+    const b = cards.find((c) => c.id === edge.to);
+    if (!a || !b) { edgeToolbarLayer.innerHTML = ''; return; }
+    const pa = cardCenter(a), pb = cardCenter(b);
+    const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+    const type = edge.type || 'sequence';
+    edgeToolbarLayer.innerHTML = `
+      <div class="sb-edge-toolbar" style="left:${mx - 55}px;top:${my - 15}px">
+        <button data-type-edge="${edge.id}" title="${type === 'reference' ? 'Switch to sequence' : 'Switch to reference'}" type="button" style="${type === 'reference' ? 'color:var(--accent-muted,#5a9a8a)' : ''}">${type === 'reference' ? '╌' : '—'}</button>
+        <button data-flip-edge="${edge.id}" title="Flip direction" type="button">⇄</button>
+        <button data-add-edge="${edge.id}" title="Insert card here" type="button">+</button>
+        <button data-del-edge="${edge.id}" title="Delete connector" type="button" class="danger">×</button>
+      </div>`;
+
+    edgeToolbarLayer.querySelector('[data-del-edge]').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const e2 = edges.find((e) => e.id === edge.id);
+      if (!e2) return;
+      const fromNode = cardIdToNode.get(e2.from), toNode = cardIdToNode.get(e2.to);
+      const outClass = edgeOutClassFor(e2, cards.find((c) => c.id === e2.from));
+      editor.removeSingleConnection(fromNode, toNode, outClass, 'input_1');
+    });
+    edgeToolbarLayer.querySelector('[data-flip-edge]').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const e2 = edges.find((e) => e.id === edge.id);
+      if (!e2) return;
+      const fromNode = cardIdToNode.get(e2.from), toNode = cardIdToNode.get(e2.to);
+      const outClass = edgeOutClassFor(e2, cards.find((c) => c.id === e2.from));
+      pendingSelectAfterCreate = true;
+      editor.removeSingleConnection(fromNode, toNode, outClass, 'input_1');
+      editor.addConnection(toNode, fromNode, 'output_1', 'input_1');
+    });
+    edgeToolbarLayer.querySelector('[data-type-edge]').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const e2 = edges.find((e) => e.id === edge.id);
+      if (!e2) return;
+      const next = e2.type === 'reference' ? 'sequence' : 'reference';
+      api(`/api/boards/${BOARD_ID}/edges/${e2.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: next }),
+      }).then(() => { e2.type = next; updateEdgeVisual(e2); renderEdgeToolbar(); });
+    });
+    edgeToolbarLayer.querySelector('[data-add-edge]').addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openInsertDialog(edge.id);
+    });
   }
 
   // ── Frames (groups / loops / note regions) ──────────────────────────────
@@ -180,6 +326,16 @@
 
   function membersOf(frameId) {
     return cards.filter((c) => c.frameId === frameId);
+  }
+
+  function moveCardNodeTo(card, x, y) {
+    const nodeId = cardIdToNode.get(card.id);
+    if (nodeId == null) return;
+    const el = document.getElementById('node-' + nodeId);
+    if (el) { el.style.left = x + 'px'; el.style.top = y + 'px'; }
+    const data = editor.drawflow.drawflow[editor.module].data[nodeId];
+    if (data) { data.pos_x = x; data.pos_y = y; }
+    editor.updateConnectionNodes('node-' + nodeId);
   }
 
   function mountFrame(frame) {
@@ -252,7 +408,7 @@
     el.addEventListener('pointerdown', (e) => {
       if (e.target.closest('.sb-frame-title') || e.target.closest('.sb-frame-del') || e.target.closest('.sb-frame-resize')) return;
       const r = el.getBoundingClientRect();
-      const lx = (e.clientX - r.left) / zoom, ly = (e.clientY - r.top) / zoom;
+      const lx = (e.clientX - r.left) / editor.zoom, ly = (e.clientY - r.top) / editor.zoom;
       const onBorder = lx < BORDER_HIT || ly < BORDER_HIT || lx > frame.w - BORDER_HIT || ly > frame.h - BORDER_HIT;
       const onLabel = e.target.closest('.sb-frame-label');
       if (!onBorder && !onLabel) return;
@@ -270,10 +426,8 @@
       el.style.top = y + 'px';
       membersOf(frame.id).forEach((c) => {
         c.x += dx; c.y += dy;
-        const cardEl = canvas.querySelector(`.sb-card[data-id="${c.id}"]`);
-        if (cardEl) { cardEl.style.left = c.x + 'px'; cardEl.style.top = c.y + 'px'; }
+        moveCardNodeTo(c, c.x, c.y);
       });
-      drawEdges();
     });
     el.addEventListener('pointerup', (e) => {
       if (!dragging) return;
@@ -289,13 +443,12 @@
       membersOf(frame.id).forEach((c) => {
         c.x = Math.round(c.x / GRID) * GRID;
         c.y = Math.round(c.y / GRID) * GRID;
-        const cardEl = canvas.querySelector(`.sb-card[data-id="${c.id}"]`);
-        if (cardEl) { cardEl.style.left = c.x + 'px'; cardEl.style.top = c.y + 'px'; }
+        moveCardNodeTo(c, c.x, c.y);
         api(`/api/boards/${BOARD_ID}/cards/${c.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x: c.x, y: c.y }),
         });
       });
-      drawEdges();
+      renderEdgeToolbar();
     });
 
     let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
@@ -308,8 +461,8 @@
     });
     resize.addEventListener('pointermove', (e) => {
       if (!resizing) return;
-      const w = Math.max(GRID * 4, startW + (e.clientX - startX) / zoom);
-      const h = Math.max(GRID * 3, startH + (e.clientY - startY) / zoom);
+      const w = Math.max(GRID * 4, startW + (e.clientX - startX) / editor.zoom);
+      const h = Math.max(GRID * 3, startH + (e.clientY - startY) / editor.zoom);
       el.style.width = w + 'px';
       el.style.height = h + 'px';
       frame.w = w; frame.h = h;
@@ -328,194 +481,28 @@
     });
   }
 
-  // ── Edges ────────────────────────────────────────────────────────────────
-  function drawEdges() {
-    updateLayerSize();
-
-    // Ensure defs exist (only once)
-    if (!edgesSvg.querySelector('defs')) {
-      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-      defs.innerHTML = `
-        <marker id="sb-arrow" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
-          <path d="M0,0 L0,8 L9,4 z" fill="var(--text-dim)"/>
-        </marker>
-        <marker id="sb-arrow-sel" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
-          <path d="M0,0 L0,8 L9,4 z" fill="var(--accent)"/>
-        </marker>
-        <marker id="sb-arrow-ref" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
-          <path d="M0,0 L0,8 L9,4 z" fill="var(--accent-muted,#5a9a8a)"/>
-        </marker>`;
-      edgesSvg.insertBefore(defs, edgesGroup);
-    }
-
-    let toolbarFor = null; // { id, mx, my, type } — rendered outside the SVG so it isn't hidden behind cards
-    edgesGroup.innerHTML = edges.map((e) => {
-      const a = cards.find((c) => c.id === e.from);
-      const b = cards.find((c) => c.id === e.to);
-      if (!a || !b) return '';
-      const pa = cardCenter(a);
-      const pb = cardCenter(b);
-      const { d, mx, my, cv1, cv2 } = elbowPath(pa.x, pa.y, pb.x, pb.y);
-      const sel = selectedEdge === e.id;
-      const isRef = e.type === 'reference';
-      const portColor = portColorForEdge(e);
-      const col = sel ? 'var(--accent)' : portColor || (isRef ? 'var(--accent-muted,#5a9a8a)' : 'var(--text-dim)');
-      const marker = sel ? 'url(#sb-arrow-sel)' : isRef ? 'url(#sb-arrow-ref)' : 'url(#sb-arrow)';
-      const dash = isRef ? 'stroke-dasharray="7 4"' : '';
-      const op = sel ? 1 : portColor ? 0.85 : isRef ? 0.75 : 0.65;
-      if (sel) toolbarFor = { id: e.id, mx, my, type: e.type || 'sequence' };
-      const chevron = (cv) => cv.show && !isRef
-        ? `<polygon points="-7,-5 7,0 -7,5" fill="${col}" opacity="${op}" pointer-events="none"
-            transform="translate(${cv.x},${cv.y}) rotate(${cv.a})"/>`
-        : '';
-      return `
-        <path d="${d}" fill="none"
-          stroke="transparent" stroke-width="14" style="cursor:pointer" pointer-events="stroke" data-edge="${e.id}"/>
-        <path d="${d}" fill="none"
-          stroke="${col}" stroke-width="${sel ? 2.5 : isRef ? 1.5 : 2}" stroke-linejoin="round" ${dash} marker-end="${marker}" pointer-events="none"/>
-        ${chevron(cv1)}${chevron(cv2)}`;
-    }).join('');
-
-    edgeToolbarLayer.innerHTML = toolbarFor ? `
-      <div class="sb-edge-toolbar" style="left:${toolbarFor.mx - 55}px;top:${toolbarFor.my - 15}px">
-        <button data-type-edge="${toolbarFor.id}" title="${toolbarFor.type === 'reference' ? 'Switch to sequence' : 'Switch to reference'}" type="button" style="${toolbarFor.type === 'reference' ? 'color:var(--accent-muted,#5a9a8a)' : ''}">${toolbarFor.type === 'reference' ? '╌' : '—'}</button>
-        <button data-flip-edge="${toolbarFor.id}" title="Flip direction" type="button">⇄</button>
-        <button data-add-edge="${toolbarFor.id}" title="Insert card here" type="button">+</button>
-        <button data-del-edge="${toolbarFor.id}" title="Delete connector" type="button" class="danger">×</button>
-      </div>` : '';
-
-    canvas.querySelectorAll('.sb-card.target-highlight').forEach((el) => el.classList.remove('target-highlight'));
-    const selEdge = edges.find((e) => e.id === selectedEdge);
-    if (selEdge) {
-      const toEl = canvas.querySelector(`.sb-card[data-id="${selEdge.to}"]`);
-      if (toEl) toEl.classList.add('target-highlight');
-    }
-
-    edgesGroup.querySelectorAll('[data-edge]').forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        selectedEdge = selectedEdge === el.dataset.edge ? null : el.dataset.edge;
-        drawEdges();
-      });
-    });
-    edgeToolbarLayer.querySelectorAll('[data-del-edge]').forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        const id = el.dataset.delEdge;
-        api(`/api/boards/${BOARD_ID}/edges/${id}`, { method: 'DELETE' }).then(() => {
-          edges = edges.filter((e) => e.id !== id);
-          selectedEdge = null;
-          drawEdges();
-        });
-      });
-    });
-    edgeToolbarLayer.querySelectorAll('[data-flip-edge]').forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        const id = el.dataset.flipEdge;
-        const edge = edges.find((e) => e.id === id);
-        if (!edge) return;
-        api(`/api/boards/${BOARD_ID}/edges/${id}`, { method: 'DELETE' })
-          .then(() => api(`/api/boards/${BOARD_ID}/edges`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: edge.to, to: edge.from, kind: edge.kind }),
-          }))
-          .then((newEdge) => {
-            edges = edges.filter((e) => e.id !== id);
-            edges.push(newEdge);
-            selectedEdge = newEdge.id;
-            drawEdges();
-          });
-      });
-    });
-    edgeToolbarLayer.querySelectorAll('[data-type-edge]').forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        const id = el.dataset.typeEdge;
-        const edge = edges.find((e) => e.id === id);
-        if (!edge) return;
-        const next = edge.type === 'reference' ? 'sequence' : 'reference';
-        api(`/api/boards/${BOARD_ID}/edges/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: next }),
-        }).then(() => { edge.type = next; drawEdges(); });
-      });
-    });
-    edgeToolbarLayer.querySelectorAll('[data-add-edge]').forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        openInsertDialog(el.dataset.addEdge);
-      });
-    });
-  }
-
   // ── Named output ports ────────────────────────────────────────────────────
-  function mountNamedPorts(el, card, kindDef) {
-    el.querySelectorAll('.sb-named-port').forEach((p) => p.remove());
-    const raw = card.payload?.outputs;
-    if (!raw) return;
-    const names = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    if (!names.length) return;
-    el.style.overflow = 'visible';
-    const h = card.h || 120;
-    const step = h / (names.length + 1);
-    names.forEach((name, i) => {
+  // Drawflow's own output_N dots stay the real drag-to-connect targets — we
+  // only overlay a name+color label on top of them (per-index).
+  function labelOutputPorts(nodeId, card, kindDef) {
+    const el = document.getElementById('node-' + nodeId);
+    if (!el) return;
+    el.querySelectorAll('.sb-port-label').forEach((l) => l.remove());
+    const names = portNames(card);
+    const outputEls = el.querySelectorAll('.outputs .output');
+    outputEls.forEach((port, i) => {
+      const name = names[i];
       const color = getPortColor(i, kindDef?.outputColors);
+      port.style.background = name ? color : '';
+      if (!name) return;
       const textColor = PORT_TEXT[color] || '#fff';
-      const port = document.createElement('div');
-      port.className = 'sb-named-port';
-      port.dataset.port = name;
-      port.dataset.color = color;
-      port.style.cssText = `position:absolute;right:0;top:${Math.round(step * (i + 1) - 10)}px;display:flex;align-items:center;transform:translateX(100%);cursor:grab;z-index:20;user-select:none`;
-      port.innerHTML = `<div style="width:8px;height:2px;background:${color}"></div><div style="background:${color};color:${textColor};font-size:9px;font-weight:600;padding:3px 6px;border-radius:0 3px 3px 0;white-space:nowrap">${name}</div>`;
-      el.appendChild(port);
-      wireNamedPort(port, card, name, color);
-    });
-  }
-
-  function wireNamedPort(port, card, portName, color) {
-    port.addEventListener('pointerdown', (e) => {
-      e.stopPropagation();
-      port.setPointerCapture(e.pointerId);
-      const coords = portCoords(card, 'right');
-      portDrag = { fromCard: card, fromEl: port.closest('.sb-card'), sourcePort: portName, sourceColor: color };
-      rubberLine.setAttribute('stroke', color);
-      rubberLine.setAttribute('x1', coords.x);
-      rubberLine.setAttribute('y1', coords.y);
-      rubberLine.setAttribute('x2', coords.x);
-      rubberLine.setAttribute('y2', coords.y);
-      rubberLine.style.display = '';
-      closeRadial();
-    });
-    port.addEventListener('pointermove', (e) => {
-      if (!portDrag || portDrag.sourcePort !== portName) return;
-      const p = toModel(e.clientX, e.clientY);
-      rubberLine.setAttribute('x2', p.x);
-      rubberLine.setAttribute('y2', p.y);
-      const hover = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
-      const valid = hover && hover !== portDrag.fromEl;
-      if (portDrag.targetEl && portDrag.targetEl !== hover) { portDrag.targetEl.classList.remove('drop-target'); portDrag.targetEl = null; }
-      if (valid && portDrag.targetEl !== hover) { hover.classList.add('drop-target'); portDrag.targetEl = hover; }
-    });
-    port.addEventListener('pointerup', (e) => {
-      if (!portDrag) return;
-      rubberLine.style.display = 'none';
-      rubberLine.setAttribute('stroke', 'var(--accent)');
-      if (portDrag.targetEl) portDrag.targetEl.classList.remove('drop-target');
-      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
-      if (target && target !== portDrag.fromEl) {
-        const toCard = cards.find((c) => c.id === target.dataset.id);
-        if (toCard) {
-          api(`/api/boards/${BOARD_ID}/edges`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: portDrag.fromCard.id, to: toCard.id, kind: 'link', sourcePort: portDrag.sourcePort }),
-          }).then((edge) => { edges.push(edge); drawEdges(); });
-        }
-      }
-      portDrag = null;
+      const label = document.createElement('span');
+      label.className = 'sb-port-label';
+      label.textContent = name;
+      label.style.cssText = `position:absolute; left:100%; top:50%; transform:translateY(-50%); margin-left:6px;
+        white-space:nowrap; background:${color}; color:${textColor}; font-size:9px; font-weight:600;
+        padding:2px 6px; border-radius:3px; pointer-events:none; z-index:20;`;
+      port.appendChild(label);
     });
   }
 
@@ -537,47 +524,45 @@
   }
 
   function mountCard(card) {
-    const el = document.createElement('div');
     const kindDef = contract?.kinds?.find((k) => k.id === card.kind);
     const isFlow = !!kindDef?.shape;
-    el.className = isFlow ? 'sb-card sb-flow-card' : 'sb-card';
-    el.dataset.id = card.id;
-    el.dataset.kindId = card.kind;
-    if (isFlow) el.dataset.shape = kindDef.shape;
-    el.style.left = card.x + 'px';
-    el.style.top = card.y + 'px';
     if (isFlow) {
-      // Flow cards are always sized by their kind definition — not resizable by the user.
-      // Ignore any stored w/h so old cards pick up updated defaults automatically.
+      // Flow cards are always sized by their kind definition — not resizable.
       card.w = kindDef.defaultW || 40;
       card.h = kindDef.defaultH || 40;
-      el.style.width = card.w + 'px';
-      el.style.height = card.h + 'px';
-    } else {
-      if (card.w) el.style.width = card.w + 'px';
-      if (card.h) el.style.height = card.h + 'px';
     }
+    const names = portNames(card);
+    const numOut = Math.max(1, names.length);
     const icon = KIND_ICONS[card.kind] || '□';
-    el.innerHTML = `
+    const classes = isFlow ? 'sb-card sb-flow-card' : 'sb-card';
+    const html = `
       <div class="sb-card-head">
         <span class="sb-kind-icon" aria-hidden="true">${icon}</span>
         <span class="sb-kind-label">${card.kind}</span>
         <button class="sb-dots" type="button">⋯</button>
       </div>
       <div class="sb-card-body">loading…</div>
-      <div class="sb-resize" title="Drag to resize"></div>
-      <div class="sb-port" data-side="top" title="Drag to connect">↑</div>
-      <div class="sb-port" data-side="right" title="Drag to connect">→</div>
-      <div class="sb-port" data-side="bottom" title="Drag to connect">↓</div>
-      <div class="sb-port" data-side="left" title="Drag to connect">←</div>`;
-    zoomLayer.appendChild(el);
-    zoomLayer.appendChild(edgeToolbarLayer); // keep above all cards for hit-testing/visibility
+      <div class="sb-resize" title="Drag to resize"></div>`;
+
+    const nodeId = editor.addNode(card.kind, 1, numOut, card.x, card.y, classes, {}, html, false);
+    cardIdToNode.set(card.id, nodeId);
+    nodeIdToCard.set(nodeId, card);
+
+    const el = document.getElementById('node-' + nodeId);
+    el.dataset.id = card.id;
+    el.dataset.kindId = card.kind;
+    if (isFlow) {
+      el.dataset.shape = kindDef.shape;
+      el.style.width = card.w + 'px';
+      el.style.height = card.h + 'px';
+    } else {
+      if (card.w) el.style.width = card.w + 'px';
+      if (card.h) el.style.height = card.h + 'px';
+    }
 
     renderCardBody(el, card);
-    wireDrag(el, card);
     wireResize(el, card);
-    wirePorts(el, card);
-    mountNamedPorts(el, card, kindDef);
+    labelOutputPorts(nodeId, card, kindDef);
 
     if (!isFlow) {
       el.querySelector('.sb-dots').addEventListener('click', (e) => {
@@ -586,7 +571,7 @@
       });
     } else {
       el.addEventListener('click', (e) => {
-        if (e.target.closest('.sb-port')) return;
+        if (e.target.closest('.input') || e.target.closest('.output')) return;
         e.stopPropagation();
         openRadial(el, card);
       });
@@ -600,71 +585,19 @@
           body: JSON.stringify({ from: linkMode, to: card.id, kind: 'link' }),
         }).then((edge) => {
           edges.push(edge);
-          drawEdges();
+          attachEdge(edge);
           setLinkMode(null);
         });
       }
     });
   }
 
-  // ── Drag (move card) ─────────────────────────────────────────────────────
-  function wireDrag(el, card) {
-    const head = el.querySelector('.sb-card-head');
-    const isFlow = el.classList.contains('sb-flow-card');
-    const dragTarget = isFlow ? el : head;
-    let dragging = false, offX = 0, offY = 0;
-
-    dragTarget.addEventListener('pointerdown', (e) => {
-      if (!isFlow && e.target.closest('.sb-dots')) return;
-      if (e.target.closest('.sb-port') || e.target.closest('.sb-resize')) return;
-      dragging = true;
-      dragTarget.setPointerCapture(e.pointerId);
-      const r = el.getBoundingClientRect();
-      offX = (e.clientX - r.left) / zoom;
-      offY = (e.clientY - r.top) / zoom;
-      closeRadial();
-    });
-    dragTarget.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const p = toModel(e.clientX, e.clientY);
-      const x = p.x - offX;
-      const y = p.y - offY;
-      el.style.left = x + 'px';
-      el.style.top = y + 'px';
-      card.x = x;
-      card.y = y;
-      drawEdges();
-    });
-    dragTarget.addEventListener('pointerup', (e) => {
-      if (!dragging) return;
-      dragging = false;
-      dragTarget.releasePointerCapture(e.pointerId);
-      const snappedX = Math.round(card.x / GRID) * GRID;
-      const snappedY = Math.round(card.y / GRID) * GRID;
-      el.style.left = snappedX + 'px';
-      el.style.top = snappedY + 'px';
-      card.x = snappedX;
-      card.y = snappedY;
-      drawEdges();
-      const center = cardCenter(card);
-      const hostFrame = findFrameAt(center.x, center.y);
-      const newFrameId = hostFrame ? hostFrame.id : null;
-      const patch = { x: snappedX, y: snappedY };
-      if (newFrameId !== (card.frameId || null)) patch.frameId = newFrameId;
-      card.frameId = newFrameId;
-      api(`/api/boards/${BOARD_ID}/cards/${card.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-    });
-  }
-
-  // ── Resize ───────────────────────────────────────────────────────────────
+  // ── Resize (Drawflow has no built-in resize; kept custom) ────────────────
   function wireResize(el, card) {
     const handle = el.querySelector('.sb-resize');
     let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
 
+    handle.addEventListener('mousedown', (e) => e.stopPropagation());
     handle.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       resizing = true;
@@ -677,81 +610,29 @@
     });
     handle.addEventListener('pointermove', (e) => {
       if (!resizing) return;
-      const w = Math.max(GRID * 4, startW + (e.clientX - startX) / zoom);
-      const h = Math.max(GRID * 3, startH + (e.clientY - startY) / zoom);
+      const w = Math.max(GRID * 4, startW + (e.clientX - startX) / editor.zoom);
+      const h = Math.max(GRID * 3, startH + (e.clientY - startY) / editor.zoom);
       el.style.width = w + 'px';
       el.style.height = h + 'px';
       card.w = w;
       card.h = h;
-      drawEdges();
     });
     handle.addEventListener('pointerup', () => {
       if (!resizing) return;
       resizing = false;
-      handle.releasePointerCapture(0);
       const snappedW = Math.round(card.w / GRID) * GRID;
       const snappedH = Math.round(card.h / GRID) * GRID;
       el.style.width = snappedW + 'px';
       el.style.height = snappedH + 'px';
       card.w = snappedW;
       card.h = snappedH;
-      drawEdges();
+      const nodeId = cardIdToNode.get(card.id);
+      editor.updateConnectionNodes('node-' + nodeId);
+      renderEdgeToolbar();
       api(`/api/boards/${BOARD_ID}/cards/${card.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ w: snappedW, h: snappedH }),
-      });
-    });
-  }
-
-  // ── Port drag (draw connections) ─────────────────────────────────────────
-  function wirePorts(el, card) {
-    el.querySelectorAll('.sb-port').forEach((port) => {
-      port.addEventListener('pointerdown', (e) => {
-        e.stopPropagation();
-        port.setPointerCapture(e.pointerId);
-        const c = canvas.getBoundingClientRect();
-        const coords = portCoords(card, port.dataset.side);
-        portDrag = { fromCard: card, fromEl: el };
-        rubberLine.setAttribute('x1', coords.x);
-        rubberLine.setAttribute('y1', coords.y);
-        rubberLine.setAttribute('x2', coords.x);
-        rubberLine.setAttribute('y2', coords.y);
-        rubberLine.style.display = '';
-        closeRadial();
-      });
-      port.addEventListener('pointermove', (e) => {
-        if (!portDrag) return;
-        const p = toModel(e.clientX, e.clientY);
-        rubberLine.setAttribute('x2', p.x);
-        rubberLine.setAttribute('y2', p.y);
-        const hover = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
-        const valid = hover && hover !== portDrag.fromEl;
-        if (portDrag.targetEl && portDrag.targetEl !== hover) {
-          portDrag.targetEl.classList.remove('drop-target');
-          portDrag.targetEl = null;
-        }
-        if (valid && portDrag.targetEl !== hover) {
-          hover.classList.add('drop-target');
-          portDrag.targetEl = hover;
-        }
-      });
-      port.addEventListener('pointerup', (e) => {
-        if (!portDrag) return;
-        rubberLine.style.display = 'none';
-        if (portDrag.targetEl) portDrag.targetEl.classList.remove('drop-target');
-        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.sb-card');
-        if (target && target !== portDrag.fromEl) {
-          const toCard = cards.find((c) => c.id === target.dataset.id);
-          if (toCard) {
-            api(`/api/boards/${BOARD_ID}/edges`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ from: portDrag.fromCard.id, to: toCard.id, kind: 'link' }),
-            }).then((edge) => { edges.push(edge); drawEdges(); });
-          }
-        }
-        portDrag = null;
       });
     });
   }
@@ -761,8 +642,8 @@
     if (radialFor === card.id) return closeRadial();
     const r = cardEl.getBoundingClientRect();
     const c = canvas.getBoundingClientRect();
-    radial.style.left = (r.left - c.left + canvas.scrollLeft + r.width / 2 - 50) + 'px';
-    radial.style.top = (r.top - c.top + canvas.scrollTop + r.height / 2 - 50) + 'px';
+    radial.style.left = (r.left - c.left + r.width / 2 - 50) + 'px';
+    radial.style.top = (r.top - c.top + r.height / 2 - 50) + 'px';
     radial.style.display = 'block';
     radialFor = card.id;
     radial.onclick = (e) => {
@@ -774,22 +655,15 @@
       if (action === 'edit') { openEditDialog(cardEl, card); return; }
       api(`/api/boards/${BOARD_ID}/cards/${card.id}/actions/${action}`, { method: 'POST' }).then(() => {
         if (action === 'delete') {
-          cardEl.remove();
+          const nodeId = cardIdToNode.get(card.id);
+          editor.removeNodeId('node-' + nodeId);
+          cardIdToNode.delete(card.id);
+          nodeIdToCard.delete(nodeId);
           cards = cards.filter((c) => c.id !== card.id);
-          edges = edges.filter((e) => e.from !== card.id && e.to !== card.id);
-          drawEdges();
         }
       });
     };
   }
-
-  canvas.addEventListener('pointerdown', (e) => {
-    if (!e.target.closest('.sb-card') && !e.target.closest('.sb-radial') && !e.target.closest('#sb-edges') && !e.target.closest('#sb-edge-toolbar-layer')) {
-      closeRadial();
-      setLinkMode(null);
-      if (selectedEdge) { selectedEdge = null; drawEdges(); }
-    }
-  });
 
   // ── Board menu ────────────────────────────────────────────────────────────
   const boardMenuBtn = document.getElementById('sb-board-menu-btn');
@@ -808,12 +682,12 @@
     if (btn.dataset.action === 'add-card') openAddDialog();
     if (btn.dataset.action === 'clean-view') { setCleanView(!cleanView); return; }
     if (btn.dataset.action === 'add-frame') {
-      const x = Math.round((canvas.scrollLeft / zoom + 40) / GRID) * GRID;
-      const y = Math.round((canvas.scrollTop / zoom + 40) / GRID) * GRID;
+      const x = Math.round((-editor.canvas_x / editor.zoom + 40) / GRID) * GRID;
+      const y = Math.round((-editor.canvas_y / editor.zoom + 40) / GRID) * GRID;
       api(`/api/boards/${BOARD_ID}/frames`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'group', x, y }),
-      }).then((frame) => { frames.push(frame); mountFrame(frame); drawEdges(); });
+      }).then((frame) => { frames.push(frame); mountFrame(frame); });
     }
   });
   document.addEventListener('click', (e) => {
@@ -925,8 +799,8 @@
     const schema = kind.payloadSchema || {};
     Object.keys(schema).forEach((key) => {
       if (schema[key] === 'list') {
-        const editor = containerEl.querySelector(`[data-field="${key}"][data-type="list"]`);
-        payload[key] = editor?.querySelector('[data-list-value]')?.value || '';
+        const editor2 = containerEl.querySelector(`[data-field="${key}"][data-type="list"]`);
+        payload[key] = editor2?.querySelector('[data-list-value]')?.value || '';
       } else {
         const field = containerEl.querySelector(`[data-field="${key}"]`);
         payload[key] = schema[key] === 'any' ? JSON.parse(field.value) : field.value;
@@ -936,13 +810,13 @@
   }
 
   function setupListFields(containerEl, kind) {
-    containerEl.querySelectorAll('.sb-list-editor[data-type="list"]').forEach((editor) => {
-      const key = editor.dataset.field;
+    containerEl.querySelectorAll('.sb-list-editor[data-type="list"]').forEach((listEditor) => {
+      const key = listEditor.dataset.field;
       const outputColors = kind?.outputColors;
-      const hidden = editor.querySelector('[data-list-value]');
-      const itemsEl = editor.querySelector('.sb-list-items');
-      const addInput = editor.querySelector('.sb-list-input');
-      const addBtn = editor.querySelector('.sb-list-add-btn');
+      const hidden = listEditor.querySelector('[data-list-value]');
+      const itemsEl = listEditor.querySelector('.sb-list-items');
+      const addInput = listEditor.querySelector('.sb-list-input');
+      const addBtn = listEditor.querySelector('.sb-list-add-btn');
 
       function getItems() { return (hidden.value || '').split(',').map((s) => s.trim()).filter(Boolean); }
       function setItems(arr) {
@@ -1028,8 +902,8 @@
       return;
     }
 
-    const x = Math.round((canvas.scrollLeft / zoom + 40) / GRID) * GRID;
-    const y = Math.round((canvas.scrollTop / zoom + 40) / GRID) * GRID;
+    const x = Math.round((-editor.canvas_x / editor.zoom + 40) / GRID) * GRID;
+    const y = Math.round((-editor.canvas_y / editor.zoom + 40) / GRID) * GRID;
     api(`/api/boards/${BOARD_ID}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1037,7 +911,6 @@
     }).then((card) => {
       cards.push(card);
       mountCard(card);
-      drawEdges();
       addDialog.close();
     }).catch(() => { addError.textContent = 'Failed to create card.'; addError.hidden = false; });
   });
@@ -1046,8 +919,8 @@
   // downstream card further away along the same direction to make room.
   function insertCardOnEdge(edgeId, kind, payload) {
     const edge = edges.find((e) => e.id === edgeId);
-    const a = cards.find((c) => c.id === edge.from);
-    const b = cards.find((c) => c.id === edge.to);
+    const a = cards.find((c) => c.id === edge?.from);
+    const b = cards.find((c) => c.id === edge?.to);
     if (!edge || !a || !b) { addDialog.close(); return; }
 
     const pa = cardCenter(a), pb = cardCenter(b);
@@ -1058,48 +931,38 @@
     const midX = Math.round(((pa.x + pb.x) / 2 - newW / 2) / GRID) * GRID;
     const midY = Math.round(((pa.y + pb.y) / 2 - newH / 2) / GRID) * GRID;
 
-    api(`/api/boards/${BOARD_ID}/edges/${edgeId}`, { method: 'DELETE' })
-      .then(() => api(`/api/boards/${BOARD_ID}/cards`, {
-        method: 'POST',
+    const aOut = cardIdToNode.get(a.id), bIn = cardIdToNode.get(b.id);
+    const edgeOutClass = edgeOutClassFor(edge, a);
+    editor.removeSingleConnection(aOut, bIn, edgeOutClass, 'input_1');
+
+    api(`/api/boards/${BOARD_ID}/cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kind.id, x: midX, y: midY, w: newW, h: newH, payload }),
+    }).then((newCard) => {
+      cards.push(newCard);
+      mountCard(newCard);
+
+      const shift = newW + 40;
+      const newBx = Math.round((b.x + ux * shift) / GRID) * GRID;
+      const newBy = Math.round((b.y + uy * shift) / GRID) * GRID;
+      b.x = newBx; b.y = newBy;
+      moveCardNodeTo(b, newBx, newBy);
+      api(`/api/boards/${BOARD_ID}/cards/${b.id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: kind.id, x: midX, y: midY, w: newW, h: newH, payload }),
-      }))
-      .then((newCard) => {
-        cards.push(newCard);
-        mountCard(newCard);
+        body: JSON.stringify({ x: newBx, y: newBy }),
+      });
 
-        const shift = newW + 40;
-        const newBx = Math.round((b.x + ux * shift) / GRID) * GRID;
-        const newBy = Math.round((b.y + uy * shift) / GRID) * GRID;
-        b.x = newBx; b.y = newBy;
-        const bEl = canvas.querySelector(`.sb-card[data-id="${b.id}"]`);
-        if (bEl) { bEl.style.left = newBx + 'px'; bEl.style.top = newBy + 'px'; }
-        api(`/api/boards/${BOARD_ID}/cards/${b.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ x: newBx, y: newBy }),
-        });
+      const newNodeId = cardIdToNode.get(newCard.id);
+      editor.addConnection(aOut, newNodeId, edgeOutClass, 'input_1');
+      editor.addConnection(newNodeId, bIn, 'output_1', 'input_1');
 
-        edges = edges.filter((e) => e.id !== edgeId);
-        return Promise.all([
-          api(`/api/boards/${BOARD_ID}/edges`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: a.id, to: newCard.id, kind: 'link' }),
-          }),
-          api(`/api/boards/${BOARD_ID}/edges`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from: newCard.id, to: b.id, kind: 'link' }),
-          }),
-        ]);
-      })
-      .then(([e1, e2]) => {
-        edges.push(e1, e2);
-        selectedEdge = null;
-        insertEdgeId = null;
-        drawEdges();
-        addDialog.close();
-      })
-      .catch(() => { addError.textContent = 'Failed to insert card.'; addError.hidden = false; });
+      selectedEdgeId = null;
+      insertEdgeId = null;
+      renderEdgeToolbar();
+      addDialog.close();
+    }).catch(() => { addError.textContent = 'Failed to insert card.'; addError.hidden = false; });
   }
 
   // ── Edit-card flyout ──────────────────────────────────────────────────────
@@ -1135,8 +998,10 @@
     }).then((updated) => {
       Object.assign(card, updated);
       renderCardBody(cardEl, card);
-      mountNamedPorts(cardEl, card, kind);
-      drawEdges();
+      const nodeId = cardIdToNode.get(card.id);
+      const kindDef = contract?.kinds?.find((k) => k.id === card.kind);
+      labelOutputPorts(nodeId, card, kindDef);
+      edges.filter((e) => e.from === card.id).forEach(updateEdgeVisual);
       editDialog.close();
     }).catch(() => { editError.textContent = 'Failed to save.'; editError.hidden = false; });
   });
@@ -1153,8 +1018,9 @@
     edges = es;
     frames = fs;
     setCleanView(cleanView);
-    frames.forEach(mountFrame);
     cards.forEach(mountCard);
-    drawEdges();
+    edges.forEach(attachEdge);
+    frames.forEach(mountFrame);
+    syncZoomLabel();
   });
 })();
