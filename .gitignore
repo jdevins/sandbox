@@ -16,3 +16,16 @@ __pycache__/
 # explicit export/import, not git)
 apps/claude-engine/data/repacks
 apps/claude-engine/data/repack-imports
+
+# LLM observability event log (src/llmObserver.js) — machine-local operational
+# history, one JSONL per day, not repo state
+data/runs/
+
+# Sandbox runtime state (storyboard boards, backlog, scheduler log, usage log,
+# live tool registry) — mutated per-machine and per-session, not shared repo
+# state. Tracking these caused merge conflicts between sandbox instances.
+data/storyboard/
+data/backlog.json
+data/scheduler-log.json
+apps/claude-engine/data/usage.jsonl
+apps/claude-engine/data/registries/
