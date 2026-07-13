@@ -2,6 +2,7 @@ import express from 'express';
 import { html } from '../../lib/html.js';
 import { slug } from '../../lib/store.js';
 import { parseInputs, skillModuleSource } from './codegen.js';
+import { withTags } from '../../lib/provider.js';
 
 export const meta = {
   name: 'Skill Builder',
@@ -99,6 +100,21 @@ export function createFeature(ctx) {
     res.redirect(`${base}/${ownerId}/${id}`);
   });
 
+  // JSON listing for cross-app tool pickers (e.g. Storyboard's Tool Call card).
+  // Declared before /:owner/:id so "api" isn't swallowed as an owner segment.
+  // Shape matches Command Center's /api/capabilities and /api/system-tools —
+  // { value, label, args? } — so any client consuming these can stay
+  // source-agnostic. `args` is built from the skill's own declared `inputs`
+  // schema — real, not guessed.
+  router.get('/api/list', async (req, res) => {
+    const skills = await store.list();
+    res.json(skills.filter((s) => !s.broken).map((s) => ({
+      value: `${s.owner}/${s.id}`,
+      label: `${s.name || s.id} (${s.owner})`,
+      args: (s.inputs || []).length ? Object.fromEntries(s.inputs.map((i) => [i.name, ''])) : undefined,
+    })));
+  });
+
   // View + run + eval (result rendered inline)
   router.get('/:owner/:id', (req, res) => view(req, res));
   router.post('/:owner/:id/run', (req, res) => view(req, res, { run: req.body }));
@@ -122,7 +138,7 @@ export function createFeature(ctx) {
     let resultPanel = '';
     if (opts.run) {
       const input = coerce(def.inputs, opts.run);
-      const taggedProvider = usage.withCaller(provider, { kind: 'skill', id, owner });
+      const taggedProvider = usage.withCaller(withTags(provider, { feature: 'skill-builder', agent: `${owner}/${id}` }), { kind: 'skill', id, owner });
       try {
         const out = await usage.track('skill', { id, owner })(() => mod.run(input, { provider: taggedProvider }));
         resultPanel = panel('Run result', html`<pre>${JSON.stringify(out, null, 2)}</pre>`);
@@ -167,7 +183,7 @@ export function createFeature(ctx) {
   async function runEval(mod, { id, owner }) {
     const tests = Array.isArray(mod.tests) ? mod.tests : [];
     if (!tests.length) return panel('Evaluation', ui.empty('No tests defined.'));
-    const taggedProvider = usage.withCaller(provider, { kind: 'skill', id, owner });
+    const taggedProvider = usage.withCaller(withTags(provider, { feature: 'skill-builder', agent: `${owner}/${id}` }), { kind: 'skill', id, owner });
     const rows = [];
     let pass = 0;
     for (const t of tests) {

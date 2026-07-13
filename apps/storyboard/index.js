@@ -216,9 +216,13 @@ export function createApp({ name }) {
         .sb-detail-section h4 { font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--text-dim); margin:0 0 8px; }
         .sb-field { margin-bottom:10px; }
         .sb-field label { display:block; font-size:12px; color:var(--text-dim); margin-bottom:4px; }
-        .sb-field input, .sb-field textarea { width:100%; background:var(--bg-elev-2); color:var(--text);
+        .sb-field input, .sb-field textarea, .sb-field select { width:100%; background:var(--bg-elev-2); color:var(--text);
           border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; box-sizing:border-box; }
         .sb-field textarea { min-height:70px; font-family:var(--mono); font-size:12px; }
+        .sb-field select { appearance:none; -webkit-appearance:none;
+          background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238a8f98'/></svg>");
+          background-repeat:no-repeat; background-position:right 8px center; padding-right:26px; }
+        .sb-field select option { background:var(--bg-elev-2); color:var(--text); }
         .sb-dialog-error { color:var(--bad); font-size:12px; margin-top:8px; }
         .sb-cat-tabs { display:flex; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
         .sb-cat-tab { flex:1; padding:5px 10px; font-size:12px; background:var(--bg-elev-2); color:var(--text-dim);

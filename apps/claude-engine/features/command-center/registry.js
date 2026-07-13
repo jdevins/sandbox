@@ -8,21 +8,30 @@
 
 // Server-side functions an agent can call. `gate` names the gate (see GATES)
 // that guards the endpoint, if any. `read` marks read-only (safe) capabilities.
+// `args` is a real example request body, grounded in each route's actual
+// `req.body` destructuring (see apps/backlog/index.js, src/scheduler.js) — not
+// a formal schema, but enough to fill in a Tool Call card without guessing.
 export const CAPABILITIES = [
   { id: 'backlog-list', app: 'backlog', method: 'GET', path: '/api/items', read: true,
     description: 'Read every backlog item. Safe — no mutation.' },
   { id: 'backlog-annotate', app: 'backlog', method: 'POST', path: '/api/items/:id/annotate', gate: 'annotate-append-only',
-    description: 'Append feedback to an item. Can only nudge ready-to-groom → groomed.' },
+    description: 'Append feedback to an item. Can only nudge ready-to-groom → groomed.',
+    args: { id: '<item id>', agent: '', kind: 'note', body: '' } },
   { id: 'backlog-groom-block', app: 'backlog', method: 'POST', path: '/api/items/:id/groom-block',
-    description: 'Mark an item groomer-blocked when it cannot be correlated.' },
+    description: 'Mark an item groomer-blocked when it cannot be correlated.',
+    args: { id: '<item id>', agent: '', reason: '' } },
   { id: 'backlog-approve', app: 'backlog', method: 'POST', path: '/approve', gate: 'approved-for-build',
-    description: 'Human gate. Flips approvedForBuild — the leash before any build.' },
+    description: 'Human gate. Flips approvedForBuild — the leash before any build.',
+    args: { id: '<item id>', value: '1' } },
   { id: 'backlog-claim', app: 'backlog', method: 'POST', path: '/api/items/:id/claim', gate: 'atomic-claim',
-    description: 'Atomically claim a ready + approved item. 409 otherwise.' },
+    description: 'Atomically claim a ready + approved item. 409 otherwise.',
+    args: { id: '<item id>', by: '' } },
   { id: 'backlog-complete', app: 'backlog', method: 'POST', path: '/api/items/:id/complete', gate: 'claimer-only-complete',
-    description: 'Finish an item. Only the claimer may call it; 403 otherwise.' },
+    description: 'Finish an item. Only the claimer may call it; 403 otherwise.',
+    args: { id: '<item id>', by: '', status: 'done' } },
   { id: 'scheduler-run', app: 'scheduler', method: 'spawn', path: 'claude -p', gate: 'allowed-tools',
-    description: 'Headless agent run. Tools restricted via --allowedTools (the bound).' },
+    description: 'Headless agent run. Tools restricted via --allowedTools (the bound).',
+    args: { prompt: '', allowedTools: ['Bash(curl:*)'] } },
 ];
 
 // Gates. `kind` is the crux of the whole model:

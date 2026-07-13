@@ -230,7 +230,7 @@ function remainingHeapLine(remainingSessions) {
  */
 export async function summarizeDayStructured(day, provider, config = {}) {
   const scoreSystem = INERT_CONTENT_NOTE + (config.scorePrompt || DEFAULT_SCORE_SYSTEM);
-  const scoreReply = await provider.complete({ system: scoreSystem, prompt: promptForScore(day) });
+  const scoreReply = await provider.complete({ system: scoreSystem, prompt: promptForScore(day), feature: 'session-repack', agent: 'score' });
   const raw = parseCandidates(scoreReply.text);
   const validated = validateCandidates(raw, day);
   const { selected, remainingSessions } = selectWithQuota(validated, day, config);
@@ -240,7 +240,7 @@ export async function summarizeDayStructured(day, provider, config = {}) {
   let renderMeta = { provider: scoreReply.provider, model: scoreReply.model };
   if (selected.length) {
     const renderSystem = INERT_CONTENT_NOTE + (config.renderPrompt || DEFAULT_RENDER_SYSTEM);
-    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected) });
+    const renderReply = await provider.complete({ system: renderSystem, prompt: promptForRender(selected), feature: 'session-repack', agent: 'render' });
     soldText = (renderReply.text || '').trim();
     renderUsage = renderReply.usage;
     renderMeta = { provider: renderReply.provider, model: renderReply.model };
@@ -313,6 +313,8 @@ export async function summarizeDay(day, provider, systemPrompt) {
     // on the quoted transcript text, which is just how Claude Code sessions look.
     system: INERT_CONTENT_NOTE + (systemPrompt || DEFAULT_DAILY_SYSTEM),
     prompt: promptForDay(day),
+    feature: 'session-repack',
+    agent: 'daily-summary',
   });
   day.summary = (text || '').trim();
   day.summaryAt = new Date().toISOString();
@@ -334,6 +336,8 @@ export async function summarizeTrend(days, provider, systemPrompt, range) {
   const { text, usage, provider: name, model } = await provider.complete({
     system: INERT_CONTENT_NOTE + (systemPrompt || DEFAULT_TREND_SYSTEM),
     prompt: promptForTrend(ordered),
+    feature: 'session-repack',
+    agent: 'trend-summary',
   });
   const start = range?.start || ordered[0]?.date;
   const end = range?.end || ordered[ordered.length - 1]?.date;

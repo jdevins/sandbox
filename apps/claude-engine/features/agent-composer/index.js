@@ -3,6 +3,7 @@ import { html } from '../../lib/html.js';
 import { slug } from '../../lib/store.js';
 import { agentModuleSource } from './codegen.js';
 import { learnIndex, lessonPage } from './learn.js';
+import { withTags } from '../../lib/provider.js';
 
 export const meta = {
   name: 'Agent Composer',
@@ -26,13 +27,16 @@ export function createFeature(ctx) {
   // not just "skill X ran" but "skill X ran because agent Y composed it."
   function makeExecCtx(agentTag) {
     return {
-      provider: usage.withCaller(provider, agentTag),
+      provider: usage.withCaller(withTags(provider, { feature: 'agent-composer', agent: agentTag }), agentTag),
       skills: {
         run: async (ref, input) => {
           const [owner, id] = String(ref).split('/');
           const { module } = await skillStore.get(owner, id);
           if (typeof module.run !== 'function') throw new Error(`skill "${ref}" has no run()`);
-          const taggedProvider = usage.withCaller(provider, { kind: 'skill', id, owner, calledBy: agentTag });
+          const taggedProvider = usage.withCaller(
+            withTags(provider, { feature: 'agent-composer', agent: `${agentTag}/${owner}/${id}` }),
+            { kind: 'skill', id, owner, calledBy: agentTag },
+          );
           return usage.track('skill', { id, owner, calledBy: agentTag })(() => module.run(input, { provider: taggedProvider }));
         },
       },

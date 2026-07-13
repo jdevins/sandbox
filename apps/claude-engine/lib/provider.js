@@ -10,7 +10,7 @@
  * Set ENGINE_LLM=mock to force offline/deterministic mode.
  */
 
-import { spawn } from 'node:child_process';
+import { runClaude } from '../../../src/llmObserver.js';
 
 export function mockProvider() {
   return {
@@ -32,47 +32,44 @@ export function mockProvider() {
   };
 }
 
-/** Shells out to the local `claude -p` CLI. No API key required. */
-export function cliProvider({ model } = {}) {
+/**
+ * Shells out to the local `claude -p` CLI via the shared observer
+ * (src/llmObserver.js), so every completion is tagged app='claude-engine' and
+ * shows up live (tool calls, usage) in the observability dashboard — not just
+ * as a final blob here. `feature`/`agent` at construction time are the
+ * default tags; a per-call `complete({ feature, agent })` overrides them,
+ * so a feature-scoped provider can still be re-tagged per agent/skill run.
+ */
+export function cliProvider({ model, feature = null, agent = null } = {}) {
   return {
     name: 'cli',
     model: model || 'claude',
-    async complete({ system, prompt } = {}) {
-      return new Promise((resolve, reject) => {
-        const args = ['-p'];
-        if (model) args.push('--model', model);
-        // Use the CLI's native flag instead of hand-wrapping in literal
-        // <system> tags — that wrapper was itself indistinguishable from a
-        // real injection attempt and is what triggered the recurring
-        // false-positive flagging, independent of anything in the content.
-        if (system) args.push('--system-prompt', system);
-
-        // shell:false so `system`/`prompt` text reaches the CLI as literal argv/
-        // stdin — no shell metacharacter interpretation, regardless of content.
-        const child = spawn('claude', args, { shell: false });
-        let output = '';
-        let errOut = '';
-
-        child.stdout.on('data', (d) => (output += d.toString()));
-        child.stderr.on('data', (d) => (errOut += d.toString()));
-        child.on('error', (err) => reject(new Error(`Failed to launch claude CLI: ${err.message}`)));
-        child.on('close', (code) => {
-          if (code !== 0 && !output.trim()) {
-            reject(new Error(`claude CLI exited ${code}: ${errOut.trim() || '(no output)'}`));
-          } else {
-            resolve({ text: output.trim(), usage: {}, provider: 'cli', model: model || 'claude' });
-          }
-        });
-
-        child.stdin.write(prompt || '');
-        child.stdin.end();
+    async complete({ system, prompt, model: callModel, feature: callFeature, agent: callAgent } = {}) {
+      // Use the CLI's native --system-prompt flag instead of hand-wrapping in
+      // literal <system> tags — that wrapper was itself indistinguishable from
+      // a real injection attempt and is what triggered recurring false-positive
+      // flagging, independent of anything in the content.
+      const result = await runClaude({
+        app: 'claude-engine',
+        feature: callFeature || feature,
+        agent: callAgent || agent,
+        prompt,
+        system,
+        model: callModel || model,
       });
+      if (result.status === 'error') throw new Error(result.text || 'claude CLI error');
+      return { text: (result.text || '').trim(), usage: result.usage || {}, provider: 'cli', model: callModel || model || 'claude' };
     },
   };
 }
 
 /** Choose a provider from the environment. Defaults to local CLI. */
-export function getProvider(env = process.env) {
+export function getProvider(env = process.env, { feature, agent } = {}) {
   if (env.ENGINE_LLM === 'mock') return mockProvider();
-  return cliProvider({ model: env.ENGINE_MODEL });
+  return cliProvider({ model: env.ENGINE_MODEL, feature, agent });
+}
+
+/** Re-tags an existing provider instance with a feature/agent for one scope — e.g. an agent run wrapping the engine's shared ctx.provider. */
+export function withTags(provider, tags) {
+  return { ...provider, complete: (args) => provider.complete({ ...args, ...tags }) };
 }

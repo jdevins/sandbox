@@ -1,9 +1,9 @@
 import cron from 'node-cron';
-import { spawn } from 'node:child_process';
 import { readFile, writeFile, readFileSync, writeFileSync, existsSync, watch } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ROOT } from './app.js';
+import { runClaude } from './llmObserver.js';
 
 const SCHEDULES_FILE = path.join(ROOT, 'data', 'schedules.json');
 const LOG_FILE = path.join(ROOT, 'data', 'scheduler-log.json');
@@ -111,7 +111,7 @@ function saveLog() {
   writeFile(LOG_FILE, JSON.stringify(log, null, 2), () => {});
 }
 
-function runPrompt(job, context) {
+async function runPrompt(job, context) {
   const promptPath = path.join(ROOT, job.prompt);
   if (!existsSync(promptPath)) {
     writeRun(job.id, { status: 'error', output: `Prompt file not found: ${job.prompt}` });
@@ -141,48 +141,28 @@ function runPrompt(job, context) {
   // explicitly null it out here so a later unscoped run doesn't inherit it.
   writeRun(job.id, { status: 'running', output: null, startedAt: new Date().toISOString(), context: context || null });
 
-  // claude -p reads the prompt from stdin; piping it in avoids arg-quoting issues.
-  // Scheduled runs are headless — no one can approve a permission prompt — so we
-  // pre-allow the curl calls our local prompts use (e.g. the groomer's backlog API).
-  // Scope it tightly: only curl, nothing else stays gated-then-stalled.
-  const child = spawn('claude', ['-p', '--allowedTools', 'Bash(curl:*)'], { cwd: ROOT, shell: true });
-  let output = '';
-  let error = '';
-
-  child.on('error', (err) => {
-    writeRun(job.id, {
-      status: 'error',
-      output: `Failed to launch claude: ${err.message}`,
-      finishedAt: new Date().toISOString(),
-    });
+  // Routed through the shared observer (src/llmObserver.js) so this run's tool
+  // calls and usage show up live in the observability dashboard, tagged
+  // app='scheduler' / feature=job.id — not just as a final blob here.
+  // Scheduled runs are headless — no one can approve a permission prompt — so
+  // we pre-allow the curl calls our local prompts use (e.g. the groomer's
+  // backlog API). Scope it tightly: only curl, nothing else stays gated-then-stalled.
+  const result = await runClaude({
+    app: 'scheduler',
+    feature: job.id,
+    agent: job.name || job.id,
+    prompt: promptText,
+    allowedTools: ['Bash(curl:*)'],
   });
 
-  child.stdout.on('data', (d) => (output += d.toString()));
-  child.stderr.on('data', (d) => (error += d.toString()));
-
-  child.on('close', (code) => {
-    const out = output || error || '(no output)';
-    const blocked = code === 0 && looksPermissionBlocked(out);
-    writeRun(job.id, {
-      status: code === 0 && !blocked ? 'ok' : 'error',
-      output: blocked
-        ? `⚠ Run blocked on a tool permission prompt — the agent could not get approval headlessly. ` +
-          `Add the needed tool to --allowedTools in src/scheduler.js.\n\n${out}`
-        : out,
-      finishedAt: new Date().toISOString(),
-    });
+  writeRun(job.id, {
+    status: result.status === 'ok' ? 'ok' : 'error',
+    output: result.status === 'blocked'
+      ? `⚠ Run blocked on a tool permission prompt — the agent could not get approval headlessly. ` +
+        `Add the needed tool to --allowedTools in src/scheduler.js.\n\n${result.text}`
+      : result.text,
+    finishedAt: new Date().toISOString(),
   });
-
-  child.stdin.write(promptText);
-  child.stdin.end();
-}
-
-// A headless `claude -p` exits 0 even when it gave up because a tool needed
-// approval — so a permission block masquerades as a successful run. Sniff the
-// output for that signature and treat it as an error instead of silent "ok".
-const PERMISSION_BLOCK = /(needs?|requires?).{0,30}(approval|permission)|permission prompt|approve the tool|I'?m blocked/i;
-function looksPermissionBlocked(output) {
-  return typeof output === 'string' && PERMISSION_BLOCK.test(output);
 }
 
 function writeRun(id, fields) {

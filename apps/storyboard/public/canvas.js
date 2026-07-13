@@ -740,16 +740,25 @@
     addDialogTitle.textContent = 'Insert card on connector';
   }
 
-  function fieldHtml(key, type, value, hints = {}) {
+  function fieldHtml(key, type, value, hints = {}, fieldOptions = {}, listId = null) {
     const isLong = type === 'any' || key === 'text' || key === 'html' || key === 'xml' || key === 'sql';
     const val = type === 'any' ? JSON.stringify(value ?? null, null, 2) : String(value ?? '');
     const hint = hints[key] || '';
     const hintEl = hint ? ` <span class="sb-field-hint" title="${hint}">?</span>` : '';
     const label = `<label>${key}${type === 'any' ? ' (JSON)' : ''}${hintEl}</label>`;
+    if (type === 'select') {
+      const opts = fieldOptions[key] || [];
+      const optionsHtml = opts
+        .map((o) => `<option value="${o.value}"${o.value === val ? ' selected' : ''}>${o.label || o.value}</option>`)
+        .join('');
+      return `<div class="sb-field">${label}<select data-field="${key}" data-type="${type}">${optionsHtml}</select></div>`;
+    }
     if (isLong) {
       return `<div class="sb-field">${label}<textarea data-field="${key}" data-type="${type}" placeholder="${hint || key}">${val}</textarea></div>`;
     }
-    return `<div class="sb-field">${label}<input data-field="${key}" data-type="${type}" value="${val}" placeholder="${hint || key}"></div>`;
+    const listAttr = listId ? ` list="${listId}"` : '';
+    const datalistEl = listId ? `<datalist id="${listId}"></datalist>` : '';
+    return `<div class="sb-field">${label}<input data-field="${key}" data-type="${type}" value="${val}" placeholder="${hint || key}"${listAttr}>${datalistEl}</div>`;
   }
 
   function listFieldHtml(key, value, hints, outputColors) {
@@ -777,17 +786,19 @@
   function renderDetail(kind, values) {
     const example = values || kind.exampleCard?.payload || {};
     const hints = kind.fieldHints || {};
+    const fieldOptions = kind.fieldOptions || {};
+    const suggestions = kind.fieldSuggestions || {};
     const contentFields = Object.keys(kind.payloadSchema || {})
       .map((key) => {
         const type = kind.payloadSchema[key];
-        return type === 'list'
-          ? listFieldHtml(key, example[key], hints, kind.outputColors)
-          : fieldHtml(key, type, example[key], hints);
+        if (type === 'list') return listFieldHtml(key, example[key], hints, kind.outputColors);
+        const listId = suggestions[key] ? `sb-dl-${key}` : null;
+        return fieldHtml(key, type, example[key], hints, fieldOptions, listId);
       })
       .join('');
     const optionsKeys = Object.keys(kind.optionsSchema || {});
     const optionsSection = optionsKeys.length
-      ? `<div class="sb-detail-section"><h4>Options</h4>${optionsKeys.map((k) => fieldHtml(k, kind.optionsSchema[k], undefined, hints)).join('')}</div>`
+      ? `<div class="sb-detail-section"><h4>Options</h4>${optionsKeys.map((k) => fieldHtml(k, kind.optionsSchema[k], undefined, hints, fieldOptions)).join('')}</div>`
       : '';
     return `
       <div class="sb-detail-section"><h4>Core contents</h4>${contentFields}</div>
@@ -847,6 +858,42 @@
     });
   }
 
+  // Suggestion sources are URL strings fetched once and cached, keyed by
+  // another field's value (e.g. name suggestions keyed by the callType
+  // select). Every source endpoint returns [{ value, label? }, ...] — one
+  // shape regardless of what's behind it (a live store, a declared registry,
+  // or a manually-refreshed file) — so this stays source-agnostic. The field
+  // is always a free-text input too — picking a suggestion is optional;
+  // typing something new plans a tool that doesn't exist yet.
+  const escAttr = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const suggestionCache = new Map();
+  function fetchSuggestionList(url) {
+    if (!suggestionCache.has(url)) {
+      suggestionCache.set(url, fetch(url).then((r) => (r.ok ? r.json() : [])).catch(() => []));
+    }
+    return suggestionCache.get(url);
+  }
+
+  function setupSuggestions(containerEl, kind) {
+    Object.entries(kind.fieldSuggestions || {}).forEach(([fieldKey, cfg]) => {
+      const datalistEl = containerEl.querySelector(`#sb-dl-${fieldKey}`);
+      const keyField = containerEl.querySelector(`[data-field="${cfg.keyedBy}"]`);
+      if (!datalistEl || !keyField) return;
+      const apply = () => {
+        const url = (cfg.sources || {})[keyField.value];
+        if (!url) { datalistEl.innerHTML = ''; return; }
+        datalistEl.innerHTML = '';
+        fetchSuggestionList(url).then((list) => {
+          datalistEl.innerHTML = (list || [])
+            .map((it) => `<option value="${escAttr(it.value)}"${it.label ? ` label="${escAttr(it.label)}"` : ''}></option>`)
+            .join('');
+        });
+      };
+      apply();
+      keyField.addEventListener('change', apply);
+    });
+  }
+
   document.getElementById('sb-cat-tabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.sb-cat-tab');
     if (!tab) return;
@@ -867,6 +914,7 @@
     kindBack.querySelector('.sb-kind-back-label').textContent = kind.name || kind.id;
     detailEl.innerHTML = renderDetail(kind);
     setupListFields(detailEl, kind);
+    setupSuggestions(detailEl, kind);
     addCreateBtn.disabled = false;
     addError.hidden = true;
   }
@@ -980,6 +1028,7 @@
     editError.hidden = true;
     editDetailEl.innerHTML = renderDetail(kind, card.payload);
     setupListFields(editDetailEl, kind);
+    setupSuggestions(editDetailEl, kind);
     editDialog.showModal();
   }
 

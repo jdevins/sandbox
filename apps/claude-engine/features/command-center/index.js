@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import { html, raw } from '../../lib/html.js';
 import { CAPABILITIES, GATES, TOOLS, LOOPS } from './registry.js';
@@ -9,8 +11,34 @@ export const meta = {
 };
 
 export function createFeature(ctx) {
-  const { ui, page, stores, base, usage } = ctx;
+  const { ui, page, stores, base, usage, paths } = ctx;
   const router = express.Router();
+
+  // system-tools.json is maintained by the `.claude/skills/system-discovery`
+  // skill (manual refresh, not live) — it's the only record of what built-in
+  // tools/MCPs are actually available, since that data lives in the
+  // assistant's own session, not anywhere Node can introspect.
+  const systemToolsPath = path.join(paths.data, 'registries', 'system-tools.json');
+  function readSystemTools() {
+    try { return JSON.parse(fs.readFileSync(systemToolsPath, 'utf8')); }
+    catch { return { generatedAt: null, builtin: [], mcp: [] }; }
+  }
+
+  // JSON listings for cross-app tool pickers (e.g. Storyboard's Tool Call
+  // card). Capabilities reuse the same declared, code-grounded registry the
+  // inspector below reads from — one source of truth, not a second discovery
+  // mechanism. Declared before /inspect/:kind/:id isn't strictly required
+  // (no path collision) but keeps API routes grouped together.
+  router.get('/api/capabilities', (req, res) => {
+    res.json(CAPABILITIES.map((c) => ({ value: `${c.method} ${c.path}`, label: `${c.app} — ${c.description}`, args: c.args })));
+  });
+
+  router.get('/api/system-tools', (req, res) => {
+    const data = readSystemTools();
+    if (req.query.category === 'builtin') return res.json(data.builtin.map((t) => ({ value: t.name, label: t.description || '', args: t.args })));
+    if (req.query.category === 'mcp') return res.json(data.mcp.map((v) => ({ value: v, label: '' })));
+    res.json(data);
+  });
 
   const crumb = [{ href: base, label: 'Command Center' }];
   const shell = (title, body, breadcrumb = crumb) =>
