@@ -8,7 +8,7 @@ export const definition = {
   name: 'Tool Call',
   description: 'A tool invocation. Pick the source (MCP/skill/API/server function/built-in) and whether it reads, writes, or both.',
   category: 'ai-workflow',
-  payloadSchema: { name: 'string', callType: 'select', io: 'string', args: 'string' },
+  payloadSchema: { name: 'string', callType: 'select', io: 'string', args: 'json' },
   optionsSchema: {},
   hooks: [],
   fieldOptions: {

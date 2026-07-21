@@ -5,7 +5,7 @@ export const definition = {
   name: 'Output',
   description: 'Final result or delivery node. Describes what format and destination the workflow produces.',
   category: 'ai-workflow',
-  payloadSchema: { format: 'string', destination: 'string', description: 'string' },
+  payloadSchema: { format: 'string', destination: 'string', description: 'text' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'output', payload: { format: 'JSON', destination: 'API response', description: 'Structured summary returned to caller' } },

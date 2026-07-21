@@ -10,7 +10,7 @@ const KEYWORDS = [
 export const definition = {
   id: 'sql',
   description: 'Displays a SQL statement as formatted, syntax-highlighted text. Use for queries, schema snippets, or migrations.',
-  payloadSchema: { sql: 'string' },
+  payloadSchema: { sql: 'text' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'sql', payload: { sql: 'SELECT id, name\nFROM users\nWHERE active = true\nORDER BY name ASC;' } },

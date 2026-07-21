@@ -4,10 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { ghostStamp } from '../../src/lib/release.js';
 import { listDefinitions, getKind } from './lib/kinds/index.js';
 import {
-  GRID, listBoards, getBoard, createBoard, deleteBoard,
+  GRID, listBoards, getBoard, createBoard, updateBoard, deleteBoard,
   listCards, createCard, updateCard, deleteCard,
   listEdges, createEdge, patchEdge, deleteEdge,
-  listFrames, createFrame, updateFrame, deleteFrame,
+  listFrames, createFrame, updateFrame, deleteFrame, ensureSubprocessBoard,
 } from './lib/store.js';
 import { buildSystemPrompt } from './lib/chat-context.js';
 import { getSession, newSessionId, formatHistory } from './lib/chat-session.js';
@@ -20,7 +20,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const meta = {
   name: 'Storyboard',
   description: 'Free-form collaboration canvas: drag cards, connect them, hand them off to other apps.',
-  version: '0.5.1',
+  version: '0.5.3',
 };
 
 // All card actions — even instant ones — go through one async/pollable
@@ -105,14 +105,22 @@ export function createApp({ name }) {
   router.get('/boards/:id', (req, res) => {
     const board = getBoard(req.params.id);
     if (!board) return res.status(404).type('html').send('<p>Board not found.</p>');
+    const parentBoard = board.parentBoardId ? getBoard(board.parentBoardId) : null;
 
     res.type('html').send(`<!doctype html><html data-theme="dark"><head>
       <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>${esc(board.name)} · Storyboard</title><link rel="stylesheet" href="/static/css/dark.css">
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/drawflow@0.0.60/dist/drawflow.min.css">
       <style>
-        .sb-toolbar { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); }
-        .sb-canvas { position:relative; width:100%; height:calc(100vh - 56px); overflow:hidden;
+        .sb-page { display:flex; flex-direction:column; height:100vh; }
+        .sb-subprocess-banner { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:none;
+          padding:8px 16px; background:var(--accent-dim); border-bottom:2px solid var(--accent); }
+        .sb-subprocess-back { display:inline-flex; align-items:center; gap:6px; padding:8px 18px; font-size:14px; font-weight:700;
+          background:var(--accent); color:var(--bg); border-radius:8px; text-decoration:none; }
+        .sb-subprocess-back:hover { filter:brightness(1.12); }
+        .sb-subprocess-label { font-size:12px; color:var(--accent); text-transform:uppercase; letter-spacing:.05em; font-weight:600; }
+        .sb-toolbar { display:flex; justify-content:space-between; align-items:center; padding:10px 16px; border-bottom:1px solid var(--border); flex:none; }
+        .sb-canvas { position:relative; width:100%; flex:1; min-height:0; overflow:hidden;
           background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: ${GRID}px ${GRID}px; }
         #drawflow { position:absolute; inset:0; }
         /* drawflow.min.css's own .drawflow .drawflow-node rule outranks a plain .sb-card on
@@ -127,6 +135,25 @@ export function createApp({ name }) {
           width:10px; height:10px; background:var(--text-dim); border:2px solid var(--bg-elev); border-radius:50%; }
         .drawflow .drawflow-node .input { left:-16px; }
         .drawflow .drawflow-node .output { right:-16px; }
+        /* Opt-in port placement (definition.inputSide/outputSide: 'top'|'bottom').
+           Left/right stay on Drawflow's native relative+zero-width-container
+           scheme above; top/bottom breaks the port container out of that flow
+           entirely (position:absolute, centered on the node's own box) since
+           Drawflow's default mechanism can only offset within the flex row.
+           updateConnectionNodes() re-measures live port DOM position on every
+           redraw, so connections still anchor correctly wherever we put them. */
+        .drawflow .drawflow-node.port-in-top .inputs, .drawflow .drawflow-node.port-in-bottom .inputs {
+          position:absolute; width:auto; left:50%; transform:translateX(-50%); display:flex; gap:8px; }
+        .drawflow .drawflow-node.port-in-top .inputs { top:-14px; }
+        .drawflow .drawflow-node.port-in-bottom .inputs { top:auto; bottom:-14px; }
+        .drawflow .drawflow-node.port-in-top .input, .drawflow .drawflow-node.port-in-bottom .input {
+          position:static; left:auto; right:auto; top:auto; margin:0; }
+        .drawflow .drawflow-node.port-out-top .outputs, .drawflow .drawflow-node.port-out-bottom .outputs {
+          position:absolute; width:auto; left:50%; transform:translateX(-50%); display:flex; gap:8px; }
+        .drawflow .drawflow-node.port-out-top .outputs { top:-14px; }
+        .drawflow .drawflow-node.port-out-bottom .outputs { top:auto; bottom:-14px; }
+        .drawflow .drawflow-node.port-out-top .output, .drawflow .drawflow-node.port-out-bottom .output {
+          position:static; left:auto; right:auto; top:auto; margin:0; }
         .drawflow .connection .main-path { stroke:var(--text-dim); stroke-width:2px; }
         .drawflow .connection .main-path:hover { stroke:var(--accent); cursor:pointer; }
         .sb-zoom { display:flex; align-items:center; gap:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
@@ -171,6 +198,11 @@ export function createApp({ name }) {
         .sb-frame[data-type="group"] { border:2px dashed var(--border); }
         .sb-frame[data-type="loop"]  { border:2px dashed var(--accent); }
         .sb-frame[data-type="note"]  { border:1px dotted var(--warn); background:color-mix(in srgb, var(--warn) 6%, transparent); }
+        .sb-frame[data-type="subprocess"] { border:2px solid var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent); cursor:pointer; }
+        .sb-frame[data-type="subprocess"] .sb-frame-label { color:var(--accent); border-color:var(--accent); }
+        .sb-frame-open-hint { display:none; position:absolute; inset:0; align-items:center; justify-content:center;
+          font-size:12px; color:var(--accent); opacity:0.75; pointer-events:none; }
+        .sb-frame[data-type="subprocess"] .sb-frame-open-hint { display:flex; }
         .sb-frame-label { position:absolute; top:-26px; left:-2px; display:flex; align-items:center; gap:5px;
           pointer-events:auto; cursor:grab; background:var(--bg-elev-2); border:1px solid var(--border); border-radius:6px;
           padding:3px 6px; font-size:11px; color:var(--text-dim); max-width:calc(100% + 4px); }
@@ -195,10 +227,12 @@ export function createApp({ name }) {
         .sb-popover button { text-align:left; }
 
         dialog#sb-add-dialog, dialog#sb-edit-dialog { position:fixed; top:0; right:0; left:auto; margin:0; height:100vh; max-height:100vh;
-          width:420px; max-width:90vw; background:var(--bg-elev); color:var(--text); border:0; border-left:1px solid var(--border);
+          width:420px; min-width:320px; max-width:90vw; background:var(--bg-elev); color:var(--text); border:0; border-left:1px solid var(--border);
           border-radius:0; padding:0; }
         dialog#sb-add-dialog[open], dialog#sb-edit-dialog[open] { display:flex; flex-direction:column; }
         dialog#sb-add-dialog::backdrop, dialog#sb-edit-dialog::backdrop { background:rgba(0,0,0,0.4); }
+        .sb-dialog-resize { position:absolute; left:0; top:0; bottom:0; width:6px; cursor:ew-resize; z-index:5; }
+        .sb-dialog-resize:hover, .sb-dialog-resize.active { background:var(--accent); opacity:0.5; }
         .sb-flyout-head { padding:16px 18px; border-bottom:1px solid var(--border); flex:none; }
         .sb-flyout-body { flex:1; overflow:auto; padding:0 18px; }
         .sb-flyout-foot { padding:14px 18px; border-top:1px solid var(--border); flex:none; }
@@ -218,7 +252,28 @@ export function createApp({ name }) {
         .sb-field label { display:block; font-size:12px; color:var(--text-dim); margin-bottom:4px; }
         .sb-field input, .sb-field textarea, .sb-field select { width:100%; background:var(--bg-elev-2); color:var(--text);
           border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:inherit; box-sizing:border-box; }
-        .sb-field textarea { min-height:70px; font-family:var(--mono); font-size:12px; }
+        .sb-field textarea { min-height:150px; font-family:var(--mono); font-size:12px; resize:vertical; }
+        .sb-field .CodeMirror { border:1px solid var(--border); border-radius:6px; height:auto; min-height:150px;
+          max-height:400px; font-family:var(--mono); font-size:12px; background:var(--bg-elev-2); color:var(--text); }
+        .sb-field .CodeMirror-gutters { background:var(--bg-elev-2); border-right:1px solid var(--border); }
+        .sb-field .CodeMirror-cursor { border-left-color:var(--text); }
+        .sb-field .CodeMirror-linenumber { color:var(--text-dim); }
+        .sb-field .cm-string { color:var(--ok); }
+        .sb-field .cm-number { color:var(--llm); }
+        .sb-field .cm-property, .sb-field .cm-attribute { color:var(--accent); }
+        .sb-field .cm-keyword, .sb-field .cm-tag { color:var(--accent); }
+        .sb-field .cm-atom { color:var(--warn); }
+        .sb-table-editor .sb-table-wrap { overflow-x:auto; }
+        .sb-table-edit { border-collapse:collapse; width:100%; }
+        .sb-table-edit th, .sb-table-edit td { padding:2px; border:1px solid var(--border); }
+        .sb-table-edit th input, .sb-table-edit td input { width:100px; background:var(--bg-elev-2); color:var(--text);
+          border:0; padding:4px 6px; font-family:inherit; font-size:12px; box-sizing:border-box; }
+        .sb-table-edit th input { font-weight:600; }
+        .sb-table-col-del, .sb-table-row-del { border:0; background:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:0 4px; }
+        .sb-table-col-del:hover, .sb-table-row-del:hover { color:var(--bad); }
+        .sb-table-row-add-btn, .sb-table-col-add-btn { background:var(--bg-elev-2); color:var(--text); border:1px solid var(--border);
+          border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+        .sb-table-row-add-btn:hover, .sb-table-col-add-btn:hover { border-color:var(--accent); color:var(--accent); }
         .sb-field select { appearance:none; -webkit-appearance:none;
           background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238a8f98'/></svg>");
           background-repeat:no-repeat; background-position:right 8px center; padding-right:26px; }
@@ -284,6 +339,12 @@ export function createApp({ name }) {
         .sb-flow-card[data-kind-id="loop-back"] { --fc-bg:#5F5E5A; color:#D3D1C7; }
       </style>
     </head><body>
+      <div class="sb-page">
+      ${parentBoard ? `
+      <div class="sb-subprocess-banner">
+        <a class="sb-subprocess-back" href="${base}/boards/${esc(parentBoard.id)}">← Back to ${esc(parentBoard.name)}</a>
+        <span class="sb-subprocess-label">Subprocess</span>
+      </div>` : ''}
       <div class="sb-toolbar">
         <div><strong>${esc(board.name)}</strong> <a class="muted" href="${base}">← boards</a></div>
         <div class="row" style="position:relative">
@@ -293,6 +354,7 @@ export function createApp({ name }) {
             <button type="button" class="btn" data-action="add-card">+ Add card</button>
             <button type="button" class="btn" data-action="add-frame">+ Add frame</button>
             <button type="button" class="btn" data-action="clean-view">Clean view</button>
+            <button type="button" class="btn" data-action="auto-size">${board.autoSizeCards ? '✓ ' : ''}Auto-size cards</button>
           </div>
           <div class="sb-zoom">
             <button type="button" id="sb-zoom-out" title="Zoom out">−</button>
@@ -310,14 +372,17 @@ export function createApp({ name }) {
           <button data-action="delete" style="left:42px;top:84px" title="Delete card">Del</button>
         </div>
       </div>
+      </div>
 
       <dialog id="sb-add-dialog">
+        <div class="sb-dialog-resize" data-dialog="add"></div>
         <div class="sb-flyout-head">
           <h3 style="margin:0 0 8px" id="sb-add-title">Add card</h3>
           <div class="sb-cat-tabs" id="sb-cat-tabs">
             <button class="sb-cat-tab active" data-cat="general" type="button">General</button>
             <button class="sb-cat-tab" data-cat="ai-workflow" type="button">AI Workflow</button>
             <button class="sb-cat-tab" data-cat="flow" type="button">Flow</button>
+            <button class="sb-cat-tab" data-cat="integration" type="button">Integration</button>
           </div>
         </div>
         <div class="sb-flyout-body">
@@ -338,6 +403,7 @@ export function createApp({ name }) {
       </dialog>
 
       <dialog id="sb-edit-dialog">
+        <div class="sb-dialog-resize" data-dialog="edit"></div>
         <div class="sb-flyout-head">
           <h3 style="margin:0 0 4px">Edit card</h3>
           <p class="muted" style="font-size:12px;margin:0">Update the card contents below.</p>
@@ -357,9 +423,15 @@ export function createApp({ name }) {
       <script>
         const BASE = ${JSON.stringify(base)};
         const BOARD_ID = ${JSON.stringify(board.id)};
+        const PARENT_BOARD_ID = ${JSON.stringify(board.parentBoardId || null)};
+        const AUTO_SIZE_CARDS = ${JSON.stringify(!!board.autoSizeCards)};
         const GRID = ${GRID};
       </script>
       <script src="https://cdn.jsdelivr.net/npm/drawflow@0.0.60/dist/drawflow.min.js"></script>
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+      <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/xml/xml.min.js"></script>
       <script src="${base}/assets/canvas.js?v=${LOADED_AT}"></script>
       <script src="${base}/assets/sb-chat.js?v=${LOADED_AT}"></script>
       ${ghostStamp({ version: meta.version, loadedAt: LOADED_AT })}
@@ -383,6 +455,12 @@ export function createApp({ name }) {
   // ── Boards API ──────────────────────────────────────────────────────────
   router.get('/api/boards', (req, res) => res.json(listBoards()));
   router.post('/api/boards', (req, res) => res.json(createBoard({ name: req.body?.name })));
+
+  router.patch('/api/boards/:id', (req, res) => {
+    const board = updateBoard(req.params.id, req.body || {});
+    if (!board) return res.status(404).json({ error: 'Not found' });
+    res.json(board);
+  });
 
   // ── Cards API ────────────────────────────────────────────────────────────
   router.get('/api/boards/:id/cards', (req, res) => res.json(listCards(req.params.id)));
@@ -510,6 +588,12 @@ export function createApp({ name }) {
   router.delete('/api/boards/:id/frames/:frameId', (req, res) => {
     deleteFrame(req.params.id, req.params.frameId);
     res.status(204).end();
+  });
+
+  router.post('/api/boards/:id/frames/:frameId/subprocess', (req, res) => {
+    const board = ensureSubprocessBoard(req.params.id, req.params.frameId);
+    if (!board) return res.status(404).json({ error: 'Frame not found' });
+    res.json(board);
   });
 
   // ── Board Chat ────────────────────────────────────────────────────────────

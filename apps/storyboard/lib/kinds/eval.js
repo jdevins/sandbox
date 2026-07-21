@@ -5,7 +5,7 @@ export const definition = {
   name: 'Eval',
   description: 'Evaluation node. Grades or scores output against defined criteria before passing it downstream.',
   category: 'ai-workflow',
-  payloadSchema: { metric: 'string', criteria: 'string', passCondition: 'string', outputs: 'list' },
+  payloadSchema: { metric: 'string', criteria: 'text', passCondition: 'text', outputs: 'list' },
   optionsSchema: {},
   hooks: [],
   outputColors: 'binary',

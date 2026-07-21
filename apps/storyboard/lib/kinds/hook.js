@@ -5,7 +5,7 @@ export const definition = {
   name: 'Hook',
   description: 'Pre- or post-tool hook. Runs logic before or after a tool call executes.',
   category: 'ai-workflow',
-  payloadSchema: { phase: 'string', trigger: 'string', action: 'string' },
+  payloadSchema: { phase: 'string', trigger: 'text', action: 'text' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'hook', payload: { phase: 'pre', trigger: 'Before any Bash tool call', action: 'Validate command against allowlist' } },

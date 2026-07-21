@@ -1,4 +1,5 @@
 (function () {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const canvas = document.getElementById('sb-canvas');
   const dfContainer = document.getElementById('drawflow');
   const framesLayer = document.getElementById('sb-frames-layer');
@@ -15,6 +16,7 @@
   let pendingEdge = null;          // set right before a programmatic addConnection() replaying a known edge
   let pendingSelectAfterCreate = false;
   let cleanView = localStorage.getItem(`sb-clean-${BOARD_ID}`) === '1';
+  let autoSizeCards = AUTO_SIZE_CARDS;
 
   const cardIdToNode = new Map();  // card.id -> drawflow numeric node id
   const nodeIdToCard = new Map();  // drawflow numeric node id -> card object
@@ -28,6 +30,39 @@
     const btn = document.querySelector('[data-action="clean-view"]');
     if (btn) btn.textContent = v ? '✓ Clean view' : 'Clean view';
   }
+
+  // ── Card dialog resize (persisted globally — a UI preference, not board content) ──
+  (function setupDialogResize() {
+    const savedWidth = localStorage.getItem('sb-dialog-width');
+    const dialogs = [document.getElementById('sb-add-dialog'), document.getElementById('sb-edit-dialog')];
+    if (savedWidth) dialogs.forEach((d) => { if (d) d.style.width = savedWidth + 'px'; });
+
+    document.querySelectorAll('.sb-dialog-resize').forEach((handle) => {
+      const dialog = handle.closest('dialog');
+      let dragging = false, startX = 0, startW = 0;
+      handle.addEventListener('pointerdown', (e) => {
+        dragging = true;
+        handle.classList.add('active');
+        handle.setPointerCapture(e.pointerId);
+        startX = e.clientX;
+        startW = dialog.getBoundingClientRect().width;
+      });
+      handle.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        // Dialog is right-anchored — dragging the left edge left increases width.
+        const w = startW - (e.clientX - startX);
+        dialog.style.width = w + 'px';
+      });
+      handle.addEventListener('pointerup', () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('active');
+        const finalWidth = Math.round(dialog.getBoundingClientRect().width);
+        dialogs.forEach((d) => { if (d) d.style.width = finalWidth + 'px'; });
+        localStorage.setItem('sb-dialog-width', finalWidth);
+      });
+    });
+  })();
 
   // ── Drawflow setup ───────────────────────────────────────────────────────
   const editor = new Drawflow(dfContainer);
@@ -62,6 +97,8 @@
     markdown: '¶', json: '{}', html: '<>', xml: '</>', sql: 'DB',
     prompt: '✦', agent: '⬡', 'tool-call': '⚙', hook: '⚡', gate: '◈', memory: '◉', output: '◀', eval: '✓',
     start: '▶', end: '⏹', branch: '◇', merge: '⋁', parallel: '║', join: '║', wait: '⏸', error: '!', 'loop-back': '↩',
+    trigger: '⚡', host: '☁', 'api-request': '→', 'api-response': '←', 'request-data': '▤', 'response-data': '▤', table: '▦',
+    apim: '⛨', 'key-vault': '🔑',
   };
 
   const PORT_COLORS_BINARY  = ['#1D9E75', '#D85A30'];
@@ -229,7 +266,11 @@
     const card = nodeIdToCard.get(Number(id));
     if (!card) return;
     const data = editor.getNodeFromId(id);
-    const snappedX = Math.round(data.pos_x / GRID) * GRID;
+    // On a subprocess child board, start/end are anchored to the left/right
+    // edges (seeded there by ensureSubprocessBoard) so the board unmistakably
+    // reads as "flows through" — only vertical position stays draggable.
+    const lockX = PARENT_BOARD_ID && (card.kind === 'start' || card.kind === 'end');
+    const snappedX = lockX ? card.x : Math.round(data.pos_x / GRID) * GRID;
     const snappedY = Math.round(data.pos_y / GRID) * GRID;
     card.x = snappedX; card.y = snappedY;
     const el = document.getElementById('node-' + id);
@@ -313,8 +354,8 @@
   // by checking which frame a card's center currently falls inside, not the
   // other way around, so an empty frame can exist and cards can be dragged
   // into or out of it without the frame's geometry drifting.
-  const FRAME_ICONS = { group: '▢', loop: '↻', note: '✎' };
-  const FRAME_TYPES = ['group', 'loop', 'note'];
+  const FRAME_ICONS = { group: '▢', loop: '↻', note: '✎', subprocess: '⧉' };
+  const FRAME_TYPES = ['group', 'loop', 'note', 'subprocess'];
 
   function findFrameAt(x, y) {
     for (let i = frames.length - 1; i >= 0; i--) {
@@ -353,6 +394,7 @@
         <span class="sb-frame-title" data-placeholder="${frame.type}">${frame.label || ''}</span>
         <button class="sb-frame-del" type="button" title="Delete frame">×</button>
       </div>
+      <div class="sb-frame-open-hint">Click to open subprocess →</div>
       <div class="sb-frame-resize" title="Drag to resize"></div>`;
     framesLayer.appendChild(el);
 
@@ -406,7 +448,7 @@
     const BORDER_HIT = 14;
     let dragging = false, offX = 0, offY = 0;
     el.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.sb-frame-title') || e.target.closest('.sb-frame-del') || e.target.closest('.sb-frame-resize')) return;
+      if (e.target.closest('.sb-frame-title') || e.target.closest('.sb-frame-del') || e.target.closest('.sb-frame-resize') || e.target.closest('.sb-frame-icon')) return;
       const r = el.getBoundingClientRect();
       const lx = (e.clientX - r.left) / editor.zoom, ly = (e.clientY - r.top) / editor.zoom;
       const onBorder = lx < BORDER_HIT || ly < BORDER_HIT || lx > frame.w - BORDER_HIT || ly > frame.h - BORDER_HIT;
@@ -449,6 +491,18 @@
         });
       });
       renderEdgeToolbar();
+    });
+
+    // Subprocess frames don't derive membership by drag-in — clicking the
+    // body opens (or lazily creates) the linked child board's own full editor.
+    el.addEventListener('click', (e) => {
+      if (frame.type !== 'subprocess') return;
+      if (e.target.closest('.sb-frame-label') || e.target.closest('.sb-frame-resize')) return;
+      if (dragging) return;
+      e.stopPropagation();
+      api(`/api/boards/${BOARD_ID}/frames/${frame.id}/subprocess`, { method: 'POST' }).then((childBoard) => {
+        window.location.href = `${BASE}/boards/${childBoard.id}`;
+      });
     });
 
     let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
@@ -519,7 +573,27 @@
         body.appendChild(iframe);
       } else {
         body.innerHTML = res.html;
+        // Sandboxed/iframe content isn't measurable here (cross-document) —
+        // auto-size only applies to inline-rendered, non-flow cards.
+        if (autoSizeCards) applyAutoSize(el, card);
       }
+    });
+  }
+
+  // Card was mounted with no explicit width/height (shrink-to-fit its
+  // content) — measure the result and sync it back into the model, Drawflow's
+  // own position data (so port/connection anchors recompute), and the server.
+  function applyAutoSize(el, card) {
+    const kindDef = contract?.kinds?.find((k) => k.id === card.kind);
+    if (kindDef?.shape) return;
+    const w = Math.max(80, el.offsetWidth);
+    const h = Math.max(60, el.offsetHeight);
+    if (card.w === w && card.h === h) return;
+    card.w = w; card.h = h;
+    const nodeId = cardIdToNode.get(card.id);
+    if (nodeId != null) editor.updateConnectionNodes('node-' + nodeId);
+    api(`/api/boards/${BOARD_ID}/cards/${card.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ w, h }),
     });
   }
 
@@ -534,7 +608,14 @@
     const names = portNames(card);
     const numOut = Math.max(1, names.length);
     const icon = KIND_ICONS[card.kind] || '□';
-    const classes = isFlow ? 'sb-card sb-flow-card' : 'sb-card';
+    // Ports default to Drawflow's native left(in)/right(out) layout — a kind
+    // only fights that layout (see port-in-*/port-out-* CSS) if it opts in
+    // via inputSide/outputSide: 'top'|'bottom'.
+    const portClasses = [
+      kindDef?.inputSide === 'top' || kindDef?.inputSide === 'bottom' ? `port-in-${kindDef.inputSide}` : '',
+      kindDef?.outputSide === 'top' || kindDef?.outputSide === 'bottom' ? `port-out-${kindDef.outputSide}` : '',
+    ].filter(Boolean).join(' ');
+    const classes = `${isFlow ? 'sb-card sb-flow-card' : 'sb-card'}${portClasses ? ' ' + portClasses : ''}`;
     const html = `
       <div class="sb-card-head">
         <span class="sb-kind-icon" aria-hidden="true">${icon}</span>
@@ -555,10 +636,13 @@
       el.dataset.shape = kindDef.shape;
       el.style.width = card.w + 'px';
       el.style.height = card.h + 'px';
-    } else {
+    } else if (!autoSizeCards) {
       if (card.w) el.style.width = card.w + 'px';
       if (card.h) el.style.height = card.h + 'px';
     }
+    // else: leave width/height unset so the card shrinks/grows to its
+    // content (position:absolute + no explicit size = shrink-to-fit) —
+    // renderCardBody measures the result once content is in and syncs it back.
 
     renderCardBody(el, card);
     wireResize(el, card);
@@ -595,6 +679,7 @@
   // ── Resize (Drawflow has no built-in resize; kept custom) ────────────────
   function wireResize(el, card) {
     const handle = el.querySelector('.sb-resize');
+    if (autoSizeCards) { handle.style.display = 'none'; return; }
     let resizing = false, startX = 0, startY = 0, startW = 0, startH = 0;
 
     handle.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -681,6 +766,15 @@
     boardMenu.style.display = 'none';
     if (btn.dataset.action === 'add-card') openAddDialog();
     if (btn.dataset.action === 'clean-view') { setCleanView(!cleanView); return; }
+    if (btn.dataset.action === 'auto-size') {
+      // Sizing behavior (skip explicit width/height vs. measure-after-render)
+      // is baked into mountCard/renderCardBody at load time — simplest to
+      // reload than to retrofit every already-mounted card live.
+      api(`/api/boards/${BOARD_ID}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoSizeCards: !autoSizeCards }),
+      }).then(() => window.location.reload());
+      return;
+    }
     if (btn.dataset.action === 'add-frame') {
       const x = Math.round((-editor.canvas_x / editor.zoom + 40) / GRID) * GRID;
       const y = Math.round((-editor.canvas_y / editor.zoom + 40) / GRID) * GRID;
@@ -712,6 +806,7 @@
     const filtered = contract.kinds.filter((k) =>
       category === 'ai-workflow' ? k.category === 'ai-workflow' :
       category === 'flow' ? k.category === 'flow' :
+      category === 'integration' ? k.category === 'integration' :
       !k.category || k.category === 'general'
     );
     kindGrid.innerHTML = filtered
@@ -741,43 +836,63 @@
   }
 
   function fieldHtml(key, type, value, hints = {}, fieldOptions = {}, listId = null) {
-    const isLong = type === 'any' || key === 'text' || key === 'html' || key === 'xml' || key === 'sql';
+    // A kind declares "this field is multi-line prose/code" via schema type
+    // ('text' for free text, 'any' for JSON) rather than the client guessing
+    // from the field's key name — scales to new kinds without touching here.
+    const isLong = type === 'any' || type === 'text' || type === 'json' || type === 'xml';
     const val = type === 'any' ? JSON.stringify(value ?? null, null, 2) : String(value ?? '');
     const hint = hints[key] || '';
-    const hintEl = hint ? ` <span class="sb-field-hint" title="${hint}">?</span>` : '';
+    const hintEl = hint ? ` <span class="sb-field-hint" title="${esc(hint)}">?</span>` : '';
     const label = `<label>${key}${type === 'any' ? ' (JSON)' : ''}${hintEl}</label>`;
     if (type === 'select') {
       const opts = fieldOptions[key] || [];
       const optionsHtml = opts
-        .map((o) => `<option value="${o.value}"${o.value === val ? ' selected' : ''}>${o.label || o.value}</option>`)
+        .map((o) => `<option value="${esc(o.value)}"${o.value === val ? ' selected' : ''}>${esc(o.label || o.value)}</option>`)
         .join('');
       return `<div class="sb-field">${label}<select data-field="${key}" data-type="${type}">${optionsHtml}</select></div>`;
     }
     if (isLong) {
-      return `<div class="sb-field">${label}<textarea data-field="${key}" data-type="${type}" placeholder="${hint || key}">${val}</textarea></div>`;
+      return `<div class="sb-field">${label}<textarea data-field="${key}" data-type="${type}" placeholder="${esc(hint || key)}">${esc(val)}</textarea></div>`;
     }
     const listAttr = listId ? ` list="${listId}"` : '';
     const datalistEl = listId ? `<datalist id="${listId}"></datalist>` : '';
-    return `<div class="sb-field">${label}<input data-field="${key}" data-type="${type}" value="${val}" placeholder="${hint || key}"${listAttr}>${datalistEl}</div>`;
+    return `<div class="sb-field">${label}<input data-field="${key}" data-type="${type}" value="${esc(val)}" placeholder="${esc(hint || key)}"${listAttr}>${datalistEl}</div>`;
   }
 
   function listFieldHtml(key, value, hints, outputColors) {
     const val = String(value ?? '');
     const items = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [];
     const hint = hints[key] || '';
-    const hintEl = hint ? ` <span class="sb-field-hint" title="${hint}">?</span>` : '';
+    const hintEl = hint ? ` <span class="sb-field-hint" title="${esc(hint)}">?</span>` : '';
     const itemsHtml = items.map((name, i) => {
       const color = getPortColor(i, outputColors);
-      return `<div class="sb-list-item"><span class="sb-list-dot" style="background:${color}"></span><span class="sb-list-name">${name}</span><button class="sb-list-del" type="button" data-idx="${i}">×</button></div>`;
+      return `<div class="sb-list-item"><span class="sb-list-dot" style="background:${color}"></span><span class="sb-list-name">${esc(name)}</span><button class="sb-list-del" type="button" data-idx="${i}">×</button></div>`;
     }).join('');
     return `<div class="sb-field">
       <label>${key}${hintEl}</label>
       <div class="sb-list-editor" data-field="${key}" data-type="list">
-        <input type="hidden" data-list-value value="${val}">
+        <input type="hidden" data-list-value value="${esc(val)}">
         <div class="sb-list-items">${itemsHtml}</div>
         <div class="sb-list-add-row">
           <input type="text" class="sb-list-input" placeholder="path name">
           <button class="sb-list-add-btn" type="button">Add</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function tableFieldHtml(key, value, hints = {}) {
+    const hint = hints[key] || '';
+    const hintEl = hint ? ` <span class="sb-field-hint" title="${esc(hint)}">?</span>` : '';
+    const model = value && value.columns ? value : { columns: ['Column 1'], rows: [] };
+    return `<div class="sb-field">
+      <label>${key}${hintEl}</label>
+      <div class="sb-table-editor" data-field="${key}" data-type="table">
+        <input type="hidden" data-table-value value="${esc(JSON.stringify(model))}">
+        <div class="sb-table-wrap"></div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <button class="sb-table-row-add-btn" type="button">+ row</button>
+          <button class="sb-table-col-add-btn" type="button">+ column</button>
         </div>
       </div>
     </div>`;
@@ -792,6 +907,7 @@
       .map((key) => {
         const type = kind.payloadSchema[key];
         if (type === 'list') return listFieldHtml(key, example[key], hints, kind.outputColors);
+        if (type === 'table') return tableFieldHtml(key, example[key], hints);
         const listId = suggestions[key] ? `sb-dl-${key}` : null;
         return fieldHtml(key, type, example[key], hints, fieldOptions, listId);
       })
@@ -805,6 +921,25 @@
       ${optionsSection}`;
   }
 
+  // Upgrades the plain <textarea> for JSON/XML-shaped fields (types
+  // json/xml/any) into a live-highlighted CodeMirror editor. fromTextArea()
+  // hides the original textarea rather than removing it, and cm.save() on
+  // every change keeps it in sync — so collectPayload's existing
+  // `[data-field]`-based reads keep working unmodified.
+  function mountCodeEditors(containerEl, kind) {
+    if (typeof CodeMirror === 'undefined') return;
+    const schema = kind.payloadSchema || {};
+    Object.keys(schema).forEach((key) => {
+      const type = schema[key];
+      const mode = type === 'xml' ? 'xml' : (type === 'json' || type === 'any') ? { name: 'javascript', json: true } : null;
+      if (!mode) return;
+      const textarea = containerEl.querySelector(`textarea[data-field="${key}"]`);
+      if (!textarea) return;
+      const cm = CodeMirror.fromTextArea(textarea, { mode, lineNumbers: true, viewportMargin: Infinity });
+      cm.on('change', () => cm.save());
+    });
+  }
+
   function collectPayload(kind, containerEl) {
     const payload = {};
     const schema = kind.payloadSchema || {};
@@ -812,6 +947,10 @@
       if (schema[key] === 'list') {
         const editor2 = containerEl.querySelector(`[data-field="${key}"][data-type="list"]`);
         payload[key] = editor2?.querySelector('[data-list-value]')?.value || '';
+      } else if (schema[key] === 'table') {
+        const editor2 = containerEl.querySelector(`[data-field="${key}"][data-type="table"]`);
+        const raw = editor2?.querySelector('[data-table-value]')?.value || '{}';
+        try { payload[key] = JSON.parse(raw); } catch { payload[key] = { columns: [], rows: [] }; }
       } else {
         const field = containerEl.querySelector(`[data-field="${key}"]`);
         payload[key] = schema[key] === 'any' ? JSON.parse(field.value) : field.value;
@@ -855,6 +994,87 @@
         addInput.focus();
       });
       addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); } });
+    });
+  }
+
+  // Table fields serialize {columns:[...], rows:[[...],...]} as JSON into a
+  // hidden input (same "hidden input holds the truth, re-render on mutation"
+  // shape as setupListFields) — the whole mini-table is rebuilt on every
+  // structural edit (add/remove row or column) since that's simpler and cheap
+  // at this scale than patching individual cells.
+  function setupTableFields(containerEl) {
+    containerEl.querySelectorAll('.sb-table-editor[data-type="table"]').forEach((editor) => {
+      const hidden = editor.querySelector('[data-table-value]');
+      const wrap = editor.querySelector('.sb-table-wrap');
+      const rowAddBtn = editor.querySelector('.sb-table-row-add-btn');
+      const colAddBtn = editor.querySelector('.sb-table-col-add-btn');
+
+      function getModel() {
+        try { return JSON.parse(hidden.value || '{}'); } catch { return { columns: [], rows: [] }; }
+      }
+      function setModel(model) {
+        hidden.value = JSON.stringify(model);
+        renderTable(model);
+      }
+      function renderTable(model) {
+        const cols = model.columns || [];
+        const rows = model.rows || [];
+        const headCells = cols.map((c, ci) => `<th><input class="sb-table-col-input" data-ci="${ci}" value="${esc(c)}">
+          <button class="sb-table-col-del" type="button" data-ci="${ci}" title="Delete column">×</button></th>`).join('');
+        const bodyRows = rows.map((row, ri) => {
+          const cells = cols.map((_, ci) => `<td><input class="sb-table-cell-input" data-ri="${ri}" data-ci="${ci}" value="${esc(row[ci] || '')}"></td>`).join('');
+          return `<tr>${cells}<td><button class="sb-table-row-del" type="button" data-ri="${ri}" title="Delete row">×</button></td></tr>`;
+        }).join('');
+        wrap.innerHTML = `<table class="sb-table-edit"><thead><tr>${headCells}<th></th></tr></thead><tbody>${bodyRows}</tbody></table>`;
+
+        wrap.querySelectorAll('.sb-table-col-input').forEach((inp) => {
+          inp.addEventListener('input', () => {
+            const m = getModel();
+            m.columns[Number(inp.dataset.ci)] = inp.value;
+            hidden.value = JSON.stringify(m);
+          });
+        });
+        wrap.querySelectorAll('.sb-table-cell-input').forEach((inp) => {
+          inp.addEventListener('input', () => {
+            const m = getModel();
+            const ri = Number(inp.dataset.ri), ci = Number(inp.dataset.ci);
+            m.rows[ri] = m.rows[ri] || [];
+            m.rows[ri][ci] = inp.value;
+            hidden.value = JSON.stringify(m);
+          });
+        });
+        wrap.querySelectorAll('.sb-table-col-del').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const m = getModel();
+            const ci = Number(btn.dataset.ci);
+            m.columns.splice(ci, 1);
+            (m.rows || []).forEach((row) => row.splice(ci, 1));
+            setModel(m);
+          });
+        });
+        wrap.querySelectorAll('.sb-table-row-del').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const m = getModel();
+            m.rows.splice(Number(btn.dataset.ri), 1);
+            setModel(m);
+          });
+        });
+      }
+
+      colAddBtn.addEventListener('click', () => {
+        const m = getModel();
+        m.columns = m.columns || [];
+        m.columns.push('Column ' + (m.columns.length + 1));
+        setModel(m);
+      });
+      rowAddBtn.addEventListener('click', () => {
+        const m = getModel();
+        m.rows = m.rows || [];
+        m.rows.push((m.columns || []).map(() => ''));
+        setModel(m);
+      });
+
+      renderTable(getModel());
     });
   }
 
@@ -914,7 +1134,9 @@
     kindBack.querySelector('.sb-kind-back-label').textContent = kind.name || kind.id;
     detailEl.innerHTML = renderDetail(kind);
     setupListFields(detailEl, kind);
+    setupTableFields(detailEl);
     setupSuggestions(detailEl, kind);
+    mountCodeEditors(detailEl, kind);
     addCreateBtn.disabled = false;
     addError.hidden = true;
   }
@@ -1028,7 +1250,9 @@
     editError.hidden = true;
     editDetailEl.innerHTML = renderDetail(kind, card.payload);
     setupListFields(editDetailEl, kind);
+    setupTableFields(editDetailEl);
     setupSuggestions(editDetailEl, kind);
+    mountCodeEditors(editDetailEl, kind);
     editDialog.showModal();
   }
 

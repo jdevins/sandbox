@@ -3,7 +3,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const definition = {
   id: 'xml',
   description: 'Displays an XML document as formatted, syntax-highlighted text. Use for API envelopes, config files, or any XML payload.',
-  payloadSchema: { xml: 'string' },
+  payloadSchema: { xml: 'xml' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'xml', payload: { xml: '<root>\n  <item id="1">Hello</item>\n</root>' } },

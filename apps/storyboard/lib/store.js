@@ -42,15 +42,26 @@ export function getBoard(id) {
   return listBoards().find((b) => b.id === id) || null;
 }
 
-export function createBoard({ name }) {
+export function createBoard({ name, parentBoardId, parentFrameId }) {
   const boards = listBoards();
   const board = { id: newId('board'), name: name || 'Untitled board', createdAt: new Date().toISOString() };
+  if (parentBoardId) board.parentBoardId = parentBoardId;
+  if (parentFrameId) board.parentFrameId = parentFrameId;
   boards.unshift(board);
   if (!existsSync(BOARDS_INDEX)) mkdirSync(DATA_DIR, { recursive: true });
   writeJSON(BOARDS_INDEX, boards);
   writeJSON(cardsFile(board.id), []);
   writeJSON(edgesFile(board.id), []);
   writeJSON(framesFile(board.id), []);
+  return board;
+}
+
+export function updateBoard(id, patch) {
+  const boards = listBoards();
+  const board = boards.find((b) => b.id === id);
+  if (!board) return null;
+  Object.assign(board, patch);
+  writeJSON(BOARDS_INDEX, boards);
   return board;
 }
 
@@ -200,4 +211,30 @@ export function deleteFrame(boardId, frameId) {
     if (c.frameId === frameId) { delete c.frameId; changed = true; }
   }
   if (changed) writeJSON(cardsFile(boardId), cards);
+}
+
+// ─── Subprocess boards ───────────────────────────────────────────────────────
+// A subprocess frame doesn't derive membership like group/loop/note — it
+// links to a wholly separate board (its own cards/edges/frames) instead of
+// building a second editing surface. Start/end are seeded at fixed left/right
+// x's so the child board reads as "flows through" left-to-right; the client
+// (canvas.js) locks their x on drag so they stay anchored. Using the existing
+// start/end kinds (rather than new schema) keeps a future execution engine's
+// job simple — find the board's start/end cards by kind, not position.
+const SUBPROCESS_START_X = 80;
+const SUBPROCESS_END_X = 900;
+const SUBPROCESS_Y = 240;
+
+export function ensureSubprocessBoard(boardId, frameId) {
+  const frames = listFrames(boardId);
+  const frame = frames.find((f) => f.id === frameId);
+  if (!frame) return null;
+  if (frame.childBoardId) return getBoard(frame.childBoardId);
+
+  const board = createBoard({ name: frame.label || 'Subprocess', parentBoardId: boardId, parentFrameId: frameId });
+  createCard(board.id, { kind: 'start', x: SUBPROCESS_START_X, y: SUBPROCESS_Y });
+  createCard(board.id, { kind: 'end', x: SUBPROCESS_END_X, y: SUBPROCESS_Y });
+  frame.childBoardId = board.id;
+  writeJSON(framesFile(boardId), frames);
+  return board;
 }

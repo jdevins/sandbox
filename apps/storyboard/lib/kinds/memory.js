@@ -7,7 +7,7 @@ export const definition = {
   name: 'Memory / State',
   description: 'A memory or state store node. Indicate whether the workflow reads, writes, or both.',
   category: 'ai-workflow',
-  payloadSchema: { key: 'string', io: 'string', description: 'string' },
+  payloadSchema: { key: 'string', io: 'string', description: 'text' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'memory', payload: { key: 'conversation_history', io: 'read-write', description: 'Running list of prior turns' } },

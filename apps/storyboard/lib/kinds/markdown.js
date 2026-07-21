@@ -3,7 +3,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 export const definition = {
   id: 'markdown',
   description: 'Renders markdown text. Supports headers, bold, italic, inline code, fenced code blocks, links, and bullet lists.',
-  payloadSchema: { text: 'string' },
+  payloadSchema: { text: 'text' },
   // Declared now so the contract shape doesn't change later when a kind
   // actually needs one — empty/none until a real kind populates them.
   optionsSchema: {},

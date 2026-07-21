@@ -20,12 +20,22 @@ import * as join from './join.js';
 import * as wait from './wait.js';
 import * as error from './error.js';
 import * as loopBack from './loop-back.js';
+import * as trigger from './trigger.js';
+import * as host from './host.js';
+import * as apiRequest from './api-request.js';
+import * as apiResponse from './api-response.js';
+import * as requestData from './request-data.js';
+import * as responseData from './response-data.js';
+import * as table from './table.js';
+import * as apim from './apim.js';
+import * as keyVault from './key-vault.js';
 
 // New kinds register here. Each module exports { definition, render }.
 // The canvas/API never branch on a kind id directly — they only call
 // getKind(id).render(...) and read getKind(id).definition.
 const registry = [markdown, json, html, xml, sql, prompt, agent, toolCall, hook, gate, memory, output, evalKind,
-  start, end, branch, merge, parallel, join, wait, error, loopBack];
+  start, end, branch, merge, parallel, join, wait, error, loopBack,
+  trigger, apiRequest, requestData, host, apiResponse, responseData, table, apim, keyVault];
 
 export const kinds = Object.fromEntries(registry.map((k) => [k.definition.id, k]));
 

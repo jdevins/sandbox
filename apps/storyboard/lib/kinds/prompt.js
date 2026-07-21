@@ -5,7 +5,7 @@ export const definition = {
   name: 'Prompt',
   description: 'LLM prompt block. Holds a system instruction and/or user message turn.',
   category: 'ai-workflow',
-  payloadSchema: { system: 'string', user: 'string' },
+  payloadSchema: { system: 'text', user: 'text' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'prompt', payload: { system: 'You are a helpful assistant.', user: 'Summarize the input.' } },

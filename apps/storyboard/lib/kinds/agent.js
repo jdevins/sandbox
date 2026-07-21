@@ -5,7 +5,7 @@ export const definition = {
   name: 'Agent',
   description: 'An agent definition: model, system prompt, and skill references.',
   category: 'ai-workflow',
-  payloadSchema: { name: 'string', model: 'string', systemPrompt: 'string' },
+  payloadSchema: { name: 'string', model: 'string', systemPrompt: 'text' },
   optionsSchema: {},
   hooks: [],
   exampleCard: { kind: 'agent', payload: { name: 'Summarizer', model: 'claude-sonnet-4-6', systemPrompt: 'You summarize documents concisely.' } },
