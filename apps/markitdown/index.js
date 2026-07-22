@@ -10,7 +10,7 @@ const LOADED_AT = Date.now();
 export const meta = {
   name: 'MarkItDown',
   description: 'Convert PDF/Office/image files to Markdown via a Python markitdown service.',
-  version: '0.1.1',
+  version: '0.2.0',
 };
 
 export function createApp({ name }) {
@@ -96,7 +96,8 @@ function page(name) {
   .col-foot{padding:8px 14px 12px;border-top:1px solid var(--border,#2a2a2a);flex-shrink:0}
   .tok{font-size:12px;color:#5d8;font-variant-numeric:tabular-nums}
   .wave{position:absolute;left:0;right:0;bottom:0;height:0;z-index:0;pointer-events:none;transition:height .5s ease;background:rgba(40,180,120,.14)}
-  .drop{border:1px dashed var(--border,#444);border-radius:7px;padding:16px 10px;text-align:center;color:#9aa;cursor:pointer;font-size:13px}
+  .drop{border:1px dashed var(--border,#444);border-radius:7px;padding:16px 10px;text-align:center;color:#9aa;cursor:pointer;font-size:13px;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70px}
+  .droplimit{margin-top:12px!important;color:#667}
   .drop.over{border-color:#6cf;color:#cde}
   .bar{height:6px;background:#0004;border-radius:99px;margin-top:5px;overflow:hidden}
   .bar>i{display:block;height:6px;width:0;border-radius:99px;transition:width .4s}
@@ -120,8 +121,6 @@ function page(name) {
   .summary{padding:9px 10px;background:#0003;border-radius:6px;font-size:13px}
   .runrow{display:grid;grid-template-columns:130px 1fr 90px 64px 56px 56px 36px;gap:4px;align-items:center;font-size:12px;padding:5px 8px;border-bottom:1px solid var(--border,#222)}
   .run-hdr{display:grid;grid-template-columns:130px 1fr 90px 64px 56px 56px 36px;gap:4px;font-size:11px;color:#555;padding:4px 8px;border-bottom:1px solid #2a2a2a;margin-bottom:2px}
-  #ghost{background:none;border:none;font-size:15px;line-height:1;cursor:pointer;opacity:.2;transition:opacity .2s;padding:2px 4px}
-  #ghost:hover{opacity:1}
   .backdrop{position:fixed;inset:0;background:#0007;z-index:40;display:none}
   .backdrop.open{display:block}
   .flyout{position:fixed;top:0;right:0;height:100vh;width:min(560px,92vw);background:#15161a;border-left:1px solid #444;transform:translateX(100%);transition:transform .25s ease;z-index:50;display:flex;flex-direction:column}
@@ -135,7 +134,10 @@ function page(name) {
   .md pre{background:#0004;padding:10px;border-radius:6px;overflow:auto}
   .md code{font-family:monospace}
   .md img{max-width:100%}
-  #statusbar{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .hdr-actions{display:flex;align-items:center;gap:10px}
+  .svc{margin-bottom:14px;padding:10px 14px}
+  .svc-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .svc-row+.svc-row{margin-top:8px}
   #banner{flex:1;font-size:13px;padding:6px 10px}
   .fitem{font-size:11px;color:#9be;padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:monospace}
   details.errlist>summary{cursor:pointer;font-size:12px;color:#fb8;margin-top:8px;user-select:none}
@@ -151,45 +153,68 @@ function page(name) {
   .wrow-left{display:flex;align-items:baseline;gap:6px;min-width:0;overflow:hidden}
   .wrow-fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
   .wrow-size{color:#556;flex-shrink:0}
+  .col-body{display:flex;flex-direction:column}
+  .pane{flex:1;display:flex;flex-direction:column;min-height:0}
+  #pane-dir{display:none}
+  .pulse{animation:readypulse 2s infinite}
+  .step-gap{height:18px}
+  .radiorow{display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 0}
+  .infoi{cursor:help;color:#789;font-size:12px;flex-shrink:0}
+  .tok-wrap{display:flex;align-items:center;gap:5px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body><div class="wrap">
-  <header class="site"><h1>📄 MarkItDown</h1><a class="muted" href="/">← Dashboard</a></header>
-  <div id="statusbar">
-    <div id="banner" class="card">Checking service…</div>
-    <button id="clear" class="btn">Clear</button>
-    <button id="ghost" title="Restart the conversion service" aria-label="Restart service">👻</button>
+  <header class="site">
+    <h1>📄 MarkItDown</h1>
+    <div class="hdr-actions">
+      <button id="howto-btn" class="btn">How to</button>
+      <button id="help-btn" class="btn">Help</button>
+      <a class="muted" href="/">← Dashboard</a>
+    </div>
+  </header>
+  <div id="service" class="card svc">
+    <div class="svc-row">
+      <div id="banner">Checking service…</div>
+      <button id="restart" class="btn" style="display:none">Restart service</button>
+    </div>
+    <div class="svc-row">
+      <details class="types">
+        <summary>Supported file types (${types.length})</summary>
+        <div class="typegrid">${types.map((t) => `<span>${t}</span>`).join('')}</div>
+      </details>
+    </div>
   </div>
   <div class="cols">
     <div class="col card">
-      <div class="col-hd"><h2>① Inputs</h2></div>
+      <div class="col-hd"><h2>① File Sources</h2></div>
       <div class="col-body">
         <div class="tabs">
           <button id="tab-files" class="btn on">Files</button>
           <button id="tab-dir" class="btn">Directory</button>
         </div>
-        <div id="pane-files">
-          <div id="drop" class="drop">Drop files or click<br><span class="mini">single or multiple</span></div>
+        <div id="pane-files" class="pane">
+          <div id="drop" class="drop">
+            Drop files or click<br><span class="mini">single or multiple</span>
+            <p class="mini droplimit">Limit: ${batch.maxFiles} files · ${P.maxFileMB}MB each · ${batch.maxTotalMB}MB total</p>
+          </div>
           <div id="filelist"></div>
-          <p class="mini" style="margin:8px 0 0">Limit: ${batch.maxFiles} files · ${P.maxFileMB}MB each · ${batch.maxTotalMB}MB total</p>
         </div>
-        <div id="pane-dir" style="display:none">
+        <div id="pane-dir" class="pane">
+          <button id="pick" class="btn pulse" style="width:100%">📁 Choose folder…</button>
           <label class="opts"><input id="recursive" type="checkbox" checked> Include subfolders</label>
-          <select id="outmode" class="field">
-            <option value="zip">Output: zip + receipt (download)</option>
-            <option value="alongside">Output: .md alongside originals</option>
-            <option value="targetDir">Output: write to a chosen folder</option>
-          </select>
-          <button id="pick" class="btn" style="width:100%;margin-top:10px">Choose folder…</button>
-          <p class="mini" style="margin:8px 0 0">Chrome/Edge only. Write modes ask permission once.</p>
+          <div class="step-gap"></div>
+          <div class="radiorow"><label><input type="radio" name="outmode" value="zip" checked> Zip + receipt (download)</label><span class="infoi" title="Bundles every converted .md file plus a JSON/Markdown receipt into one .zip you download. Nothing is written back to disk.">ⓘ</span></div>
+          <div class="radiorow"><label><input type="radio" name="outmode" value="alongside"> .md alongside originals</label><span class="infoi" title="Writes each foo.md next to foo.pdf in the source folder. Asks for write permission on that folder once.">ⓘ</span></div>
+          <div class="radiorow"><label><input type="radio" name="outmode" value="targetDir"> Write to a chosen folder</label><span class="infoi" title="Mirrors the source folder structure into a second folder you pick, writing .md files there — originals are untouched.">ⓘ</span></div>
+          <div id="targetpick" style="display:none;margin-top:6px">
+            <button id="pick-target" class="btn" style="width:100%">📂 Choose output folder…</button>
+            <p id="targetname" class="mini" style="margin:6px 0 0"></p>
+          </div>
+          <p class="mini" style="margin:10px 0 0">Chrome/Edge only. Write modes ask permission once.</p>
         </div>
         <input id="file" type="file" multiple hidden>
-        <details class="types">
-          <summary>Supported file types (${types.length})</summary>
-          <div class="typegrid">${types.map((t) => `<span>${t}</span>`).join('')}</div>
-        </details>
       </div>
       <div class="col-foot">
         <div id="staged" class="mini" style="margin-bottom:8px"></div>
@@ -199,7 +224,7 @@ function page(name) {
     </div>
 
     <div class="col card" style="position:relative;overflow:hidden">
-      <div class="col-hd"><h2>② Working</h2><span id="tok" class="tok" title="Estimated tokens saved vs feeding the raw file text to an AI (per-type estimate)">~0 tok saved</span></div>
+      <div class="col-hd"><h2>② Working</h2><span class="tok-wrap"><span id="tok" class="tok">~0 tokens saved</span><span class="infoi" title="Estimated tokens saved vs feeding the raw file text to an AI (per-type estimate).">ⓘ</span></span></div>
       <div id="wave" class="wave"></div>
       <div id="work" class="col-body" style="position:relative;z-index:1"><div class="empty mini">Nothing yet.</div></div>
     </div>
@@ -207,6 +232,7 @@ function page(name) {
     <div class="col card">
       <div class="col-hd"><h2>③ Output</h2></div>
       <div id="outs" class="col-body"><div class="empty mini">Summary appears here.</div></div>
+      <div class="col-foot"><button id="clear" class="btn" style="width:100%">Clear</button></div>
     </div>
   </div>
 
@@ -240,7 +266,7 @@ function page(name) {
   <div class="fhead">
     <b id="fhname" style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></b>
     <span class="mini">
-      <a href="#" id="fcopy">copy</a> · <a href="#" id="fdl">download</a> · <a href="#" id="fclose">close ✕</a>
+      <span id="flyout-links"><a href="#" id="fcopy">copy</a> · <a href="#" id="fdl">download</a> · </span><a href="#" id="fclose">close ✕</a>
     </span>
   </div>
   <div id="fbody" class="fbody md"></div>
@@ -305,7 +331,7 @@ function savedOf(ext, fileBytes, md){
   const dens=(SAVING.density&&SAVING.density[ext]!=null)?SAVING.density[ext]:(SAVING.defaultDensity!=null?SAVING.defaultDensity:0.2);
   return Math.max(0, Math.round((fileBytes*dens - md.length)/cpt));
 }
-function updateTok(){ $('#tok').textContent='~'+tokenTotal.toLocaleString()+' tok saved'; }
+function updateTok(){ $('#tok').textContent='~'+tokenTotal.toLocaleString()+' tokens saved'; }
 function updateWave(found, processed){ $('#wave').style.height=(found?Math.round(processed/found*100):0)+'%'; }
 
 function extOf(name){ const d=name.lastIndexOf('.'); return d>=0?name.slice(d).toLowerCase():''; }
@@ -321,20 +347,20 @@ async function refreshStatus(){
     const b=$('#banner');
     b.innerHTML=(s.ok?'🟢 ':'🔴 ')+esc(s.detail||'');
     b.style.color=s.ok?'#5d8':'#f87';
-  }catch{ $('#banner').textContent='🔴 cannot reach app'; }
+    $('#restart').style.display=s.ok?'none':'';
+  }catch{ $('#banner').textContent='🔴 cannot reach app'; $('#restart').style.display=''; }
 }
 refreshStatus();
 
 function setTab(dir){
   $('#tab-dir').classList.toggle('on',dir);
   $('#tab-files').classList.toggle('on',!dir);
-  $('#pane-dir').style.display=dir?'':'none';
-  $('#pane-files').style.display=dir?'none':'';
+  $('#pane-dir').style.display=dir?'flex':'none';
+  $('#pane-files').style.display=dir?'none':'flex';
   staged=null; renderStaged();
 }
 $('#tab-files').onclick=()=>setTab(false);
 $('#tab-dir').onclick=()=>setTab(true);
-$('#outmode').onchange=()=>{ if(staged&&staged.mode==='dir'){ staged=null; renderStaged(); } };
 
 function renderStaged(){
   const el=$('#staged');
@@ -532,23 +558,44 @@ function stageFiles(fileList){
   renderStaged();
 }
 
+let dirSrc=null, dirLabel=null, dirOutputMode='zip', dirTargetHandle=null, dirTargetName=null;
+
 $('#pick').onclick=async()=>{
   if(!window.showDirectoryPicker){ alert('Directory mode needs Chrome or Edge (File System Access API).'); return; }
-  const outputMode=$('#outmode').value;
-  const recursive=$('#recursive').checked;
   let dir;
-  try{ dir=await window.showDirectoryPicker(outputMode==='alongside'?{mode:'readwrite'}:{}); }
-  catch{ return; }
-  let targetHandle=null, targetName=null;
-  if(outputMode==='alongside' && !await ensureRW(dir)){ alert('Write permission denied.'); return; }
-  if(outputMode==='targetDir'){
-    try{ targetHandle=await window.showDirectoryPicker({mode:'readwrite'}); }catch{ return; }
-    if(!await ensureRW(targetHandle)){ alert('Write permission denied.'); return; }
-    targetName=targetHandle.name;
-  }
-  staged={mode:'dir', dirHandle:dir, label:dir.name, outputMode, recursive, targetHandle, targetName};
-  renderStaged();
+  try{ dir=await window.showDirectoryPicker(); }catch{ return; }
+  dirSrc=dir; dirLabel=dir.name;
+  $('#pick').classList.remove('pulse');
+  $('#pick').textContent='📁 '+dirLabel;
+  syncDirStage();
 };
+document.querySelectorAll('input[name=outmode]').forEach(r=>{
+  r.onchange=async()=>{
+    dirOutputMode=document.querySelector('input[name=outmode]:checked').value;
+    $('#targetpick').style.display = dirOutputMode==='targetDir' ? '' : 'none';
+    dirTargetHandle=null; dirTargetName=null; $('#targetname').textContent='';
+    if(dirOutputMode==='alongside' && dirSrc && !await ensureRW(dirSrc)){
+      alert('Write permission denied.');
+      document.querySelector('input[name=outmode][value=zip]').checked=true;
+      dirOutputMode='zip';
+    }
+    syncDirStage();
+  };
+});
+$('#pick-target').onclick=async()=>{
+  let handle;
+  try{ handle=await window.showDirectoryPicker({mode:'readwrite'}); }catch{ return; }
+  if(!await ensureRW(handle)){ alert('Write permission denied.'); return; }
+  dirTargetHandle=handle; dirTargetName=handle.name;
+  $('#targetname').textContent='→ '+dirTargetName;
+  syncDirStage();
+};
+$('#recursive').onchange=syncDirStage;
+function syncDirStage(){
+  if(!dirSrc || (dirOutputMode==='targetDir' && !dirTargetHandle)){ staged=null; renderStaged(); return; }
+  staged={mode:'dir', dirHandle:dirSrc, label:dirLabel, outputMode:dirOutputMode, recursive:$('#recursive').checked, targetHandle:dirTargetHandle, targetName:dirTargetName};
+  renderStaged();
+}
 async function walk(handle, prefix, recursive, out){
   for await (const entry of handle.values()){
     if(entry.kind==='file'){
@@ -590,8 +637,16 @@ function receiptMd(run){
 function openFlyout(mdName){
   const md=STORE[mdName]||'';
   viewer={name:mdName.split('/').pop(), text:md};
+  $('#flyout-links').style.display='';
   $('#fhname').textContent=mdName;
   $('#fbody').innerHTML = window.marked ? marked.parse(md) : '<pre>'+esc(md)+'</pre>';
+  $('#flyout').classList.add('open'); $('#backdrop').classList.add('open');
+}
+function openInfoFlyout(title, html){
+  viewer=null;
+  $('#flyout-links').style.display='none';
+  $('#fhname').textContent=title;
+  $('#fbody').innerHTML=html;
   $('#flyout').classList.add('open'); $('#backdrop').classList.add('open');
 }
 function closeFlyout(){ $('#flyout').classList.remove('open'); $('#backdrop').classList.remove('open'); }
@@ -623,15 +678,35 @@ async function loadRuns(){
 }
 loadRuns();
 
-$('#ghost').onclick=async()=>{
+async function doRestart(btn){
   if(!confirm('Restart the conversion service? In-progress runs will be interrupted.')) return;
-  $('#ghost').disabled=true;
+  btn.disabled=true;
   $('#banner').innerHTML='♻ restarting service…'; $('#banner').style.color='#fb8';
   try{
     const s=await (await fetch(BASE+'/api/service/restart',{method:'POST'})).json();
     $('#banner').innerHTML=(s.ok?'🟢 ':'🔴 ')+esc(s.detail||''); $('#banner').style.color=s.ok?'#5d8':'#f87';
+    $('#restart').style.display=s.ok?'none':'';
   }catch{ refreshStatus(); }
-  finally{ $('#ghost').disabled=false; }
+  finally{ btn.disabled=false; }
+}
+$('#restart').onclick=()=>doRestart($('#restart'));
+
+const HOWTO_HTML='<h3>Files</h3><p>Drag files onto the drop zone (or click it), then Start. Limits are shown inside the drop zone.</p>'+
+  '<h3>Directory</h3><ol><li>Choose a folder.</li><li>Include subfolders, if wanted.</li><li>Pick an output mode — zip, alongside originals, or a chosen folder.</li><li>Start.</li></ol>'+
+  '<p class="mini">Directory mode needs Chrome or Edge (File System Access API) and runs entirely in the browser — nothing is uploaded except the bytes sent once per file to convert it.</p>'+
+  '<h3>Runs</h3><p>Every batch — Files or Directory — is logged in the Runs list at the bottom of the page.</p>';
+const HELP_HTML='<h3>Restart the service</h3><p>If the status above is red, or a run behaves oddly after a code change, restart the conversion service:</p>'+
+  '<p><button id="help-restart" class="btn">Restart service</button></p>'+
+  '<h3>Under the hood</h3><p>This page runs in the browser. Conversion happens in a small Python service (the open-source markitdown library from Microsoft) running on this machine, which this app talks to over local HTTP (127.0.0.1) — nothing leaves the machine. Each file goes to /convert and Markdown comes back. Directory mode reads and writes files entirely in the browser via the File System Access API; the service itself never touches the filesystem.</p>'+
+  '<h3>Version history</h3><ul class="mini">'+
+  '<li><b>v${meta.version}</b> — current</li>'+
+  '<li>Standalone .exe build added (run without Node)</li>'+
+  '<li>Initial release — Files and Directory conversion, zip / alongside / target-folder output, run log, token-savings estimate</li>'+
+  '</ul>';
+$('#howto-btn').onclick=()=>openInfoFlyout('How to use MarkItDown', HOWTO_HTML);
+$('#help-btn').onclick=()=>{
+  openInfoFlyout('Help', HELP_HTML);
+  $('#help-restart').onclick=()=>doRestart($('#help-restart'));
 };
 
 $('#clear').onclick=()=>{
