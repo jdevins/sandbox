@@ -73,9 +73,14 @@
   #pane-dir{display:none}
   .pulse{animation:readypulse 2s infinite}
   .step-gap{height:18px}
-  .radiorow{display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 0}
-  .infoi{cursor:help;color:#789;font-size:12px;flex-shrink:0}
+  .radiorow{display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 6px;cursor:help;border-radius:5px}
+  .radiorow:hover{background:#ffffff0a}
+  .radiorow label{cursor:pointer}
+  .infoi{color:#789;font-size:12px;flex-shrink:0}
+  .radiorow:hover .infoi,.tok-wrap:hover .infoi{color:#9cf}
   .tok-wrap{display:flex;align-items:center;gap:5px}
+  #tip{position:fixed;max-width:260px;background:#1c1e24;border:1px solid #3a3d45;border-radius:6px;padding:8px 10px;font-size:12px;line-height:1.45;color:#cdd;z-index:100;box-shadow:0 6px 20px #0009;pointer-events:none;opacity:0;transition:opacity .1s}
+  #tip.show{opacity:1}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -118,9 +123,9 @@
           <button id="pick" class="btn pulse" style="width:100%">📁 Choose folder…</button>
           <label class="opts"><input id="recursive" type="checkbox" checked> Include subfolders</label>
           <div class="step-gap"></div>
-          <div class="radiorow"><label><input type="radio" name="outmode" value="zip" checked> Zip + receipt (download)</label><span class="infoi" title="Bundles every converted .md file plus a JSON/Markdown receipt into one .zip you download. Nothing is written back to disk.">ⓘ</span></div>
-          <div class="radiorow"><label><input type="radio" name="outmode" value="alongside"> .md alongside originals</label><span class="infoi" title="Writes each foo.md next to foo.pdf in the source folder. Asks for write permission on that folder once.">ⓘ</span></div>
-          <div class="radiorow"><label><input type="radio" name="outmode" value="targetDir"> Write to a chosen folder</label><span class="infoi" title="Mirrors the source folder structure into a second folder you pick, writing .md files there — originals are untouched.">ⓘ</span></div>
+          <div class="radiorow" data-tip="Bundles every converted .md file plus a JSON/Markdown receipt into one .zip you download. Nothing is written back to disk."><label><input type="radio" name="outmode" value="zip" checked> Zip + receipt (download)</label><span class="infoi">ⓘ</span></div>
+          <div class="radiorow" data-tip="Writes each foo.md next to foo.pdf in the source folder. Asks for write permission on that folder once."><label><input type="radio" name="outmode" value="alongside"> .md alongside originals</label><span class="infoi">ⓘ</span></div>
+          <div class="radiorow" data-tip="Mirrors the source folder structure into a second folder you pick, writing .md files there — originals are untouched."><label><input type="radio" name="outmode" value="targetDir"> Write to a chosen folder</label><span class="infoi">ⓘ</span></div>
           <div id="targetpick" style="display:none;margin-top:6px">
             <button id="pick-target" class="btn" style="width:100%">📂 Choose output folder…</button>
             <p id="targetname" class="mini" style="margin:6px 0 0"></p>
@@ -137,7 +142,7 @@
     </div>
 
     <div class="col card" style="position:relative;overflow:hidden">
-      <div class="col-hd"><h2>② Working</h2><span class="tok-wrap"><span id="tok" class="tok">~0 tokens saved</span><span class="infoi" title="Estimated tokens saved vs feeding the raw file text to an AI (per-type estimate).">ⓘ</span></span></div>
+      <div class="col-hd"><h2>② Working</h2><span class="tok-wrap"><span id="tok" class="tok">~0 tokens saved</span><span class="infoi" data-tip="Estimated tokens saved vs feeding the raw file text to an AI (per-type estimate).">ⓘ</span></span></div>
       <div id="wave" class="wave"></div>
       <div id="work" class="col-body" style="position:relative;z-index:1"><div class="empty mini">Nothing yet.</div></div>
     </div>
@@ -609,5 +614,21 @@ $('#clear').onclick=()=>{
   $('#work').innerHTML='<div class="empty mini">Nothing yet.</div>';
   $('#outs').innerHTML='<div class="empty mini">Summary appears here.</div>';
 };
+
+/* hover tooltips — position:fixed escapes the column overflow clipping that native title needed */
+(function(){
+  let tip;
+  const show=el=>{
+    const txt=el.getAttribute('data-tip'); if(!txt) return;
+    if(!tip){ tip=document.createElement('div'); tip.id='tip'; document.body.appendChild(tip); }
+    tip.textContent=txt; tip.style.left='-9999px'; tip.style.top='0'; tip.classList.add('show');
+    const r=el.getBoundingClientRect(), w=tip.offsetWidth, h=tip.offsetHeight;
+    let top=r.bottom+6; if(top+h>innerHeight-8) top=r.top-h-6;
+    tip.style.left=Math.max(8,r.right-w)+'px'; tip.style.top=top+'px';
+  };
+  const hide=()=>{ if(tip) tip.classList.remove('show'); };
+  document.addEventListener('mouseover',e=>{ const el=e.target.closest('[data-tip]'); if(el) show(el); });
+  document.addEventListener('mouseout',e=>{ const el=e.target.closest('[data-tip]'); if(el&&!el.contains(e.relatedTarget)) hide(); });
+})();
 </script>
 </body></html>
